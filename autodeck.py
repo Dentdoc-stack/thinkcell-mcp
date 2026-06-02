@@ -34,6 +34,7 @@ library -- so cells can use the full think-cell cell vocabulary
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -196,6 +197,12 @@ def _validate_chart(
                 errors.append(
                     f"{s_where}.values[{v_index}] must be a number, "
                     f"got {value!r}"
+                )
+                continue
+            if not math.isfinite(value):
+                errors.append(
+                    f"{s_where}.values[{v_index}] must be a finite number "
+                    f"(NaN/Infinity break think-cell's .ppttc), got {value!r}"
                 )
                 continue
             cell: dict[str, Any] = {value_key: value}
