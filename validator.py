@@ -11,6 +11,7 @@ fields, returning ``{"valid": bool, "errors": list[str]}``.
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 # Keys that identify a cell's value type. Exactly one must be present.
@@ -190,6 +191,11 @@ def _validate_cell(cell: Any, where: str) -> list[str]:
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             errors.append(
                 f"{where}.{type_key} must be numeric, got {_typename(value)}"
+            )
+        elif not math.isfinite(value):
+            errors.append(
+                f"{where}.{type_key} must be a finite number; NaN/Infinity "
+                f"are not valid JSON and break think-cell"
             )
     else:  # "string" or "date"
         if not isinstance(value, str):
