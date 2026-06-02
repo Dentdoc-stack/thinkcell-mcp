@@ -35,11 +35,12 @@ from __future__ import annotations
 
 import json
 import math
+import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
 from autodeck import build_auto_deck
-from charts import CHART_BUILDERS, get_builder
+from charts import CHART_BUILDERS, get_builder, write_ppttc_slides
 from validator import validate_ppttc_data
 
 MODULE_DIR = Path(__file__).resolve().parent
@@ -297,6 +298,116 @@ def section_validator(score: Score) -> None:
 
 
 # --------------------------------------------------------------------------
+# Section F -- build_presentation round-trip coverage (regression guard)
+# --------------------------------------------------------------------------
+def _build_one(builder: Any) -> dict[str, Any]:
+    """Round-trip one builder through the real thinkcell library and reload."""
+    tmp = Path(tempfile.gettempdir()) / "eval_bp.ppttc"
+    out = write_ppttc_slides("deck.pptx", [([builder], [])], tmp)
+    return json.loads(Path(out).read_text(encoding="utf-8"))
+
+
+def section_build_presentation(score: Score) -> None:
+    """Every chart type must survive the multi-chart build path used by
+    ``build_presentation`` and yield a finite, structurally valid .ppttc."""
+    for name, builder_cls in CHART_BUILDERS.items():
+        example = builder_cls.example
+        data = example.get("data", [])
+        options = {
+            k: v
+            for k, v in example.items()
+            if k not in ("chart_type", "title", "data")
+        }
+        builder, _ = _safe(
+            lambda: builder_cls(data, example.get("title", "X"),
+                                chart_name="Chart1", **options)
+        )
+        if builder is None:
+            score.add(f"[{name}] build_presentation round-trip", False, 4)
+            continue
+
+        doc, exc = _safe(lambda: _build_one(builder))
+        score.add(f"[{name}] write_ppttc_slides succeeds", doc is not None, 1)
+        if doc is None:
+            continue
+        score.add(f"[{name}] round-trip is finite JSON", _json_finite(doc), 2)
+        verdict, _ = _safe(lambda: validate_ppttc_data(doc))
+        score.add(
+            f"[{name}] round-trip validates",
+            bool(verdict) and verdict["valid"],
+            1,
+        )
+
+    # A three-slide presentation must yield exactly three .ppttc entries.
+    bar = get_builder("bar")
+    slides = [
+        ([bar([{"category": "A", "V": 1}, {"category": "B", "V": 2}],
+              "S", chart_name="Chart1")], [])
+        for _ in range(3)
+    ]
+    tmp = Path(tempfile.gettempdir()) / "eval_multi.ppttc"
+    doc, _ = _safe(
+        lambda: json.loads(
+            Path(write_ppttc_slides("deck.pptx", slides, tmp))
+            .read_text(encoding="utf-8")
+        )
+    )
+    score.add(
+        "3-slide presentation yields 3 .ppttc entries",
+        isinstance(doc, list) and len(doc) == 3,
+        3,
+    )
+
+
+# --------------------------------------------------------------------------
+# Section G -- scatter bubble-size sanity (HEADROOM)
+# --------------------------------------------------------------------------
+def section_scatter(score: Score) -> None:
+    """A bubble's size drives its area, so a negative size is meaningless."""
+    cls = get_builder("scatter")
+    bad, _ = _safe(
+        lambda: cls([{"label": "A", "x": 1, "y": 2, "size": -5}], "neg")
+    )
+    errors, _ = _safe(bad.validate) if bad else ([], None)
+    score.add("scatter rejects a negative bubble size", bool(errors), 5)
+
+    # A valid positive-size bubble must still be accepted.
+    good, _ = _safe(
+        lambda: cls([{"label": "A", "x": 1, "y": 2, "size": 5}], "pos")
+    )
+    ok_errs, _ = _safe(good.validate) if good else (["x"], None)
+    score.add("scatter still accepts a positive bubble size", ok_errs == [], 2)
+
+
+# --------------------------------------------------------------------------
+# Section H -- mekko column-width sanity (HEADROOM)
+# --------------------------------------------------------------------------
+def section_mekko(score: Score) -> None:
+    """A Mekko 'Width' series sets column widths; zero/negative is degenerate."""
+    cls = get_builder("mekko")
+    bad, _ = _safe(
+        lambda: cls(
+            [{"category": "A", "V": 10, "Width": 0},
+             {"category": "B", "V": 20, "Width": -3}],
+            "bad",
+        )
+    )
+    errors, _ = _safe(bad.validate) if bad else ([], None)
+    score.add("mekko rejects non-positive column widths", bool(errors), 5)
+
+    # A normal Mekko with positive widths must still build cleanly.
+    good, _ = _safe(
+        lambda: cls(
+            [{"category": "A", "V": 10, "Width": 70},
+             {"category": "B", "V": 20, "Width": 30}],
+            "ok",
+        )
+    )
+    ok_errs, _ = _safe(good.validate) if good else (["x"], None)
+    score.add("mekko still accepts positive widths", ok_errs == [], 2)
+
+
+# --------------------------------------------------------------------------
 # cost / size of the editable surface
 # --------------------------------------------------------------------------
 def editable_loc() -> int:
@@ -328,6 +439,12 @@ def main() -> int:
     section_autodeck_guardrails(score)
     print("== Section E: validator hardening ==")
     section_validator(score)
+    print("== Section F: build_presentation round-trip coverage ==")
+    section_build_presentation(score)
+    print("== Section G: scatter bubble-size sanity ==")
+    section_scatter(score)
+    print("== Section H: mekko column-width sanity ==")
+    section_mekko(score)
     score.report()
 
     loc = editable_loc()
