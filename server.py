@@ -410,8 +410,12 @@ def create_auto_deck(
 
     Returns:
         ``{"success": bool, "ppttc_path": str | None, "slide_count": int,
-        "template": str, "errors": list[str]}``. On success the deck can be
-        converted straight away with ``convert_to_pptx`` -- no manual step.
+        "template": str, "errors": list[str], "warnings": list[str]}``. On
+        success the deck can be converted straight away with ``convert_to_pptx``
+        -- no manual step. ``warnings`` is non-fatal advice worth surfacing to
+        the user: percentage values that look like decimals (think-cell expects
+        whole points, e.g. 21.9 for 21.9%) or a single-category date axis that
+        would render with no visible bars.
     """
     return build_auto_deck(slides, output_name)
 
