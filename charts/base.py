@@ -19,6 +19,7 @@ looks like::
 """
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, ClassVar
@@ -42,17 +43,28 @@ class ChartError(Exception):
 
 
 def is_number(value: Any) -> bool:
-    """Return True for real numeric values (bool is intentionally excluded)."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """Return True for real, finite numeric values.
+
+    ``bool`` is intentionally excluded. ``NaN`` and ``+/-Infinity`` are also
+    excluded: they are not valid JSON and would produce a ``.ppttc`` that
+    think-cell's ``ppttc.exe`` rejects, so they must never reach the output.
+    """
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
 
 
 def as_number(value: Any) -> float | int:
-    """Coerce a value to int/float, falling back to 0 when not numeric."""
+    """Coerce a value to a finite int/float, falling back to 0 otherwise."""
     if is_number(value):
         return value
     try:
         number = float(value)
     except (TypeError, ValueError):
+        return 0
+    if not math.isfinite(number):
         return 0
     return int(number) if number.is_integer() else number
 
