@@ -29,3 +29,7 @@ venv/
 .idea/
 .DS_Store
 Thumbs.db
+
+# autoresearch experiment log (local only)
+results.tsv
+eval.log
