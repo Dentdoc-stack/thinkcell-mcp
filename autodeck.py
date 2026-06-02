@@ -222,6 +222,47 @@ def _validate_chart(
     return [], table
 
 
+def _chart_warnings(chart: Any, where: str, value_key: str) -> list[str]:
+    """Non-fatal sanity warnings for two documented silent-failure gotchas.
+
+    1. Single-category axis -- a chart with one category renders with little or
+       nothing visible. Provide at least two categories.
+    2. Decimal-scale percentages -- the left chart uses ``percentage`` cells,
+       where think-cell expects whole points (``21.9`` for 21.9%). Passing
+       fractions (``0.219``) is the most common silent mistake and yields a
+       chart that looks empty/flat.
+    """
+    warnings: list[str] = []
+    if not isinstance(chart, dict):
+        return warnings
+
+    categories = chart.get("categories")
+    if isinstance(categories, list) and len(categories) == 1:
+        warnings.append(
+            f"{where} has a single category: the chart will render with no "
+            f"meaningful bars. Provide at least two categories."
+        )
+
+    if value_key == "percentage":
+        magnitudes = [
+            abs(value)
+            for series in (chart.get("series") or [])
+            if isinstance(series, dict)
+            for value in (series.get("values") or [])
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        ]
+        nonzero = [m for m in magnitudes if m > 0]
+        if nonzero and all(m < 1 for m in nonzero):
+            warnings.append(
+                f"{where} percentage values all look like decimals "
+                f"(every |value| < 1). think-cell expects whole points "
+                f"(e.g. 21.9 for 21.9%), so multiply by 100 if these are "
+                f"fractions."
+            )
+
+    return warnings
+
+
 def build_auto_deck(
     slides: list[dict[str, Any]],
     output_name: str = "auto_deck",
@@ -238,7 +279,9 @@ def build_auto_deck(
 
     Returns:
         ``{"success": bool, "ppttc_path": str | None, "slide_count": int,
-        "template": str, "errors": list[str]}``.
+        "template": str, "errors": list[str], "warnings": list[str]}``.
+        ``warnings`` is non-fatal advice (e.g. decimal-scale percentages or a
+        single-category date axis) -- the build still succeeds.
     """
     if not isinstance(slides, list) or len(slides) == 0:
         return {
@@ -247,10 +290,12 @@ def build_auto_deck(
             "slide_count": 0,
             "template": str(AUTO_TEMPLATE_PATH),
             "errors": ["`slides` must be a non-empty list of slide objects"],
+            "warnings": [],
         }
 
     template = str(AUTO_TEMPLATE_PATH)
     errors: list[str] = []
+    warnings: list[str] = []
     document: list[dict[str, Any]] = []
 
     for index, slide in enumerate(slides):
@@ -284,6 +329,9 @@ def build_auto_deck(
             chart = slide.get(chart_key)
             if chart is None:
                 continue
+            warnings.extend(
+                _chart_warnings(chart, f"{where}.{chart_key}", value_key)
+            )
             chart_errors, table = _validate_chart(
                 chart, f"{where}.{chart_key}", value_key
             )
@@ -308,6 +356,7 @@ def build_auto_deck(
             "slide_count": 0,
             "template": template,
             "errors": errors,
+            "warnings": warnings,
         }
 
     # Input is valid -- now make sure the template file is actually available
@@ -325,6 +374,7 @@ def build_auto_deck(
                 "THINKCELL_DIR environment variable if it lives elsewhere, "
                 f"or place the template manually at '{AUTO_TEMPLATE_PATH}'."
             ],
+            "warnings": warnings,
         }
 
     out_path = OUTPUT_DIR / f"{_safe_filename(output_name, 'auto_deck')}.ppttc"
@@ -340,6 +390,7 @@ def build_auto_deck(
             "slide_count": 0,
             "template": template,
             "errors": [f"Could not write the .ppttc file: {exc}"],
+            "warnings": warnings,
         }
 
     return {
@@ -348,4 +399,5 @@ def build_auto_deck(
         "slide_count": len(document),
         "template": template,
         "errors": [],
+        "warnings": warnings,
     }
