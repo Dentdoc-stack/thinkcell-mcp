@@ -1,7 +1,13 @@
 """Marimekko (Mekko) chart builder for think-cell JSON automation."""
 from __future__ import annotations
 
-from .base import ChartBuilder, Table
+from .base import ChartBuilder, Table, is_number
+
+# The optional series name that drives per-category column widths. A Mekko's
+# horizontal axis is a proportion of total width, so a width must be strictly
+# positive -- a zero/negative width collapses the column and silently distorts
+# every other column's share.
+WIDTH_KEY = "Width"
 
 
 class MekkoChart(ChartBuilder):
@@ -29,7 +35,16 @@ class MekkoChart(ChartBuilder):
     }
 
     def _validate(self) -> list[str]:
-        return self.validate_categorical(min_categories=1, min_series=1)
+        errors = self.validate_categorical(min_categories=1, min_series=1)
+        for index, row in enumerate(self.data):
+            if WIDTH_KEY in row and is_number(row[WIDTH_KEY]):
+                if row[WIDTH_KEY] <= 0:
+                    errors.append(
+                        f"data[{index}]['{WIDTH_KEY}'] must be greater than 0; "
+                        f"a column width sets the category's share of the axis "
+                        f"and cannot be zero or negative (got {row[WIDTH_KEY]})"
+                    )
+        return errors
 
     def build_table(self) -> Table:
         return self.categorical_table()

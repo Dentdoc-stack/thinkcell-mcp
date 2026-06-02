@@ -48,11 +48,18 @@ class ScatterChart(ChartBuilder):
                     f"data[{index}]['y'] must be a number, "
                     f"got {type(row['y']).__name__}"
                 )
-            if "size" in row and not is_number(row["size"]):
-                errors.append(
-                    f"data[{index}]['size'] must be a number, "
-                    f"got {type(row['size']).__name__}"
-                )
+            if "size" in row:
+                if not is_number(row["size"]):
+                    errors.append(
+                        f"data[{index}]['size'] must be a number, "
+                        f"got {type(row['size']).__name__}"
+                    )
+                elif row["size"] < 0:
+                    errors.append(
+                        f"data[{index}]['size'] must be non-negative; "
+                        f"a bubble cannot have a negative area "
+                        f"(got {row['size']})"
+                    )
         return errors
 
     def build_table(self) -> Table:
