@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, Callable
@@ -60,6 +61,7 @@ EDITABLE_FILES: tuple[str, ...] = (
     "charts/combo.py",
     "autodeck.py",
     "validator.py",
+    "palettes.py",
 )
 
 INF = float("inf")
@@ -408,6 +410,94 @@ def section_mekko(score: Score) -> None:
 
 
 # --------------------------------------------------------------------------
+# Section I -- colour system: named palettes + semantic fills (HEADROOM)
+# --------------------------------------------------------------------------
+def section_palettes(score: Score) -> None:
+    """The Vizro-derived colour system must expose valid palettes and map a
+    signed value to the right semantic fill (gain teal / loss red / zero gray).
+
+    These checks are computed here independently: hex validity is verified with
+    this file's own regex, and the gain/loss mapping is asserted by sign, not
+    borrowed from the module under test.
+    """
+    mod, exc = _safe(lambda: __import__("palettes"))
+    if mod is None:
+        for label in (
+            "palettes module imports",
+            "palettes are valid hex",
+            "semantic colours present",
+            "semantic_fill colours a gain",
+            "semantic_fill colours a loss",
+            "semantic_fill neutral on zero/garbage",
+            "reverse flips the mapping",
+        ):
+            score.add(label, False, 2)
+        return
+
+    score.add("palettes module imports", True, 1)
+
+    hex_re = re.compile(r"^#[0-9A-Fa-f]{6}$")
+    palettes = getattr(mod, "PALETTES", {})
+    all_hex = bool(palettes) and all(
+        isinstance(c, str) and hex_re.match(c)
+        for colors in palettes.values()
+        for c in colors
+    )
+    score.add("every palette colour is #RRGGBB hex", all_hex, 3)
+
+    semantic = getattr(mod, "SEMANTIC", {})
+    needed = {"positive", "negative", "neutral", "info", "warning"}
+    score.add(
+        "five semantic roles are defined",
+        needed.issubset(set(semantic)),
+        2,
+    )
+    score.add(
+        "semantic colours are all valid hex",
+        bool(semantic)
+        and all(isinstance(v, str) and hex_re.match(v) for v in semantic.values()),
+        2,
+    )
+
+    fill = getattr(mod, "semantic_fill", None)
+    if not callable(fill):
+        score.add("semantic_fill colours a gain by sign", False, 4)
+        score.add("semantic_fill colours a loss by sign", False, 4)
+        score.add("semantic_fill is neutral on zero and garbage", False, 4)
+        score.add("reverse flips the gain/loss mapping", False, 3)
+    else:
+        gain, _ = _safe(lambda: fill(125.0))
+        loss, _ = _safe(lambda: fill(-30.0))
+        score.add(
+            "semantic_fill colours a gain by sign",
+            gain == semantic.get("positive"),
+            4,
+        )
+        score.add(
+            "semantic_fill colours a loss by sign",
+            loss == semantic.get("negative"),
+            4,
+        )
+        zero, _ = _safe(lambda: fill(0))
+        junk, _ = _safe(lambda: fill("x"))
+        nan, _ = _safe(lambda: fill(NAN))
+        neutral = semantic.get("neutral")
+        score.add(
+            "semantic_fill is neutral on zero and garbage",
+            zero == neutral and junk == neutral and nan == neutral,
+            4,
+        )
+        rev_down, _ = _safe(lambda: fill(-30.0, reverse=True))
+        rev_up, _ = _safe(lambda: fill(125.0, reverse=True))
+        score.add(
+            "reverse flips the gain/loss mapping",
+            rev_down == semantic.get("positive")
+            and rev_up == semantic.get("negative"),
+            3,
+        )
+
+
+# --------------------------------------------------------------------------
 # cost / size of the editable surface
 # --------------------------------------------------------------------------
 def editable_loc() -> int:
@@ -445,6 +535,8 @@ def main() -> int:
     section_scatter(score)
     print("== Section H: mekko column-width sanity ==")
     section_mekko(score)
+    print("== Section I: colour system (palettes + semantic fills) ==")
+    section_palettes(score)
     score.report()
 
     loc = editable_loc()

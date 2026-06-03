@@ -1,17 +1,18 @@
 """think-cell MCP server.
 
-Exposes eight tools over stdio for building think-cell JSON automation
+Exposes nine tools over stdio for building think-cell JSON automation
 (``.ppttc``) files and converting them to PowerPoint (``.pptx``) with
 think-cell's ``ppttc.exe``:
 
-    * create_chart       -- build a single-chart .ppttc file
-    * build_presentation -- combine many charts/slides into one .ppttc file
-    * create_auto_deck   -- build a multi-slide .ppttc with NO template setup
-    * set_deck_branding  -- recolour the auto-deck template / drop the logo
-    * convert_to_pptx    -- run ppttc.exe to produce a .pptx
-    * validate_ppttc     -- structurally validate a .ppttc document
-    * list_chart_types   -- describe every supported chart type
-    * diagnose_thinkcell -- check why think-cell automation is not working
+    * create_chart        -- build a single-chart .ppttc file
+    * build_presentation  -- combine many charts/slides into one .ppttc file
+    * create_auto_deck    -- build a multi-slide .ppttc with NO template setup
+    * set_deck_branding   -- recolour the auto-deck template / drop the logo
+    * list_color_palettes -- list built-in palettes and semantic colours
+    * convert_to_pptx     -- run ppttc.exe to produce a .pptx
+    * validate_ppttc      -- structurally validate a .ppttc document
+    * list_chart_types    -- describe every supported chart type
+    * diagnose_thinkcell  -- check why think-cell automation is not working
 
 Run directly (``python server.py``) to start the server on stdio.
 """
@@ -34,6 +35,7 @@ from charts import (
 )
 from autodeck import AUTO_TEMPLATE_PATH, build_auto_deck, ensure_auto_template
 from branding import apply_branding
+from palettes import get_palette, list_palettes
 from converter import convert_ppttc
 from diagnostics import run_diagnostics
 from validator import validate_ppttc_data
@@ -423,6 +425,7 @@ def create_auto_deck(
 @mcp.tool()
 def set_deck_branding(
     accent_colors: list[str] | None = None,
+    palette: str = "",
     remove_logo: bool = True,
 ) -> dict[str, Any]:
     """Re-brand the template that ``create_auto_deck`` uses.
@@ -443,6 +446,10 @@ def set_deck_branding(
             palette (theme accent1..accent6). When omitted, a professional
             blue-anchored default palette is applied. Per-series ``fill``
             values in ``create_auto_deck`` still override these per series.
+        palette: Optional name of a built-in palette (``vizro``, ``vizro_full``
+            or ``big_four``) to use instead of passing raw ``accent_colors``.
+            See ``list_color_palettes`` for the full set. Ignored when
+            ``accent_colors`` is given.
         remove_logo: When True (default) the think-cell logo is removed from
             the slide master.
 
@@ -450,6 +457,17 @@ def set_deck_branding(
         ``{"success": bool, "template": str, "accents": list[str],
         "logo_removed": bool, "errors": list[str]}``.
     """
+    if accent_colors is None and palette:
+        try:
+            accent_colors = get_palette(palette)
+        except KeyError as exc:
+            return {
+                "success": False,
+                "template": str(AUTO_TEMPLATE_PATH),
+                "accents": [],
+                "logo_removed": False,
+                "errors": [str(exc)],
+            }
     if not ensure_auto_template():
         return {
             "success": False,
@@ -463,6 +481,24 @@ def set_deck_branding(
             ],
         }
     return apply_branding(AUTO_TEMPLATE_PATH, accent_colors, remove_logo)
+
+
+@mcp.tool()
+def list_color_palettes() -> dict[str, Any]:
+    """List the built-in colour palettes and semantic colours.
+
+    Use this to pick a ready-made, colourblind-safe palette for
+    ``set_deck_branding`` instead of hand-picking hex codes, and to look up the
+    semantic colours (positive/negative/neutral/info/warning) for colouring a
+    waterfall's gains and losses or a delta series.
+
+    Returns:
+        ``{"palettes": {name: [hex, ...]}, "semantic": {role: hex, ...},
+        "default": str}``. Pass any ``palettes`` key as ``set_deck_branding``'s
+        ``palette`` argument; use ``semantic`` values as per-series ``fill``
+        colours in ``create_auto_deck`` (e.g. losses in the negative red).
+    """
+    return list_palettes()
 
 
 @mcp.tool()

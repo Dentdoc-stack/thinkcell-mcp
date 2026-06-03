@@ -694,6 +694,64 @@ def test_branding() -> None:
 
 
 # --------------------------------------------------------------------------
+# palettes: named palettes + semantic colours
+# --------------------------------------------------------------------------
+def test_palettes() -> None:
+    from palettes import (
+        PALETTES,
+        SEMANTIC,
+        get_palette,
+        list_palettes,
+        semantic_fill,
+    )
+
+    hex_re = re.compile(r"#[0-9A-Fa-f]{6}")
+    check("palettes: registry is non-empty", len(PALETTES) >= 2)
+    check(
+        "palettes: every colour is #RRGGBB hex",
+        all(
+            hex_re.fullmatch(c)
+            for colors in PALETTES.values()
+            for c in colors
+        ),
+    )
+
+    # vizro maps to PowerPoint's six accent slots; full keeps all ten.
+    check("palettes: 'vizro' fits 6 accent slots", len(get_palette("vizro")) == 6)
+    check("palettes: 'vizro_full' has 10 colours", len(get_palette("vizro_full")) == 10)
+    check("palettes: get_palette is case-insensitive", get_palette("VIZRO") == get_palette("vizro"))
+    check(
+        "palettes: get_palette returns a copy",
+        get_palette("vizro") is not PALETTES["vizro"],
+    )
+    try:
+        get_palette("does_not_exist")
+        check("palettes: unknown name raises KeyError", False)
+    except KeyError:
+        check("palettes: unknown name raises KeyError", True)
+
+    # Semantic colours carry meaning: gains teal, losses red, baseline gray.
+    check(
+        "palettes: all five semantic roles present",
+        set(SEMANTIC) == {"positive", "negative", "neutral", "info", "warning"},
+    )
+    check("palettes: gain is the positive colour", semantic_fill(120) == SEMANTIC["positive"])
+    check("palettes: loss is the negative colour", semantic_fill(-40) == SEMANTIC["negative"])
+    check("palettes: zero is the neutral colour", semantic_fill(0) == SEMANTIC["neutral"])
+    # reverse=True is for 'down is good' metrics (cost, churn).
+    check("palettes: reverse flips a drop to positive", semantic_fill(-40, reverse=True) == SEMANTIC["positive"])
+    check("palettes: reverse flips a rise to negative", semantic_fill(120, reverse=True) == SEMANTIC["negative"])
+    # Garbage in -> neutral out, never a crash.
+    check("palettes: non-numeric falls back to neutral", semantic_fill("nope") == SEMANTIC["neutral"])
+    check("palettes: NaN falls back to neutral", semantic_fill(float("nan")) == SEMANTIC["neutral"])
+    check("palettes: bool is not treated as a number", semantic_fill(True) == SEMANTIC["neutral"])
+
+    described = list_palettes()
+    check("palettes: list_palettes exposes palettes", "vizro" in described["palettes"])
+    check("palettes: list_palettes exposes semantic map", described["semantic"] == SEMANTIC)
+
+
+# --------------------------------------------------------------------------
 # server: every MCP tool is importable (the eval's invariant check)
 # --------------------------------------------------------------------------
 def test_server_smoke() -> None:
@@ -701,8 +759,8 @@ def test_server_smoke() -> None:
 
     tools = [
         "create_chart", "build_presentation", "create_auto_deck",
-        "set_deck_branding", "convert_to_pptx", "validate_ppttc",
-        "list_chart_types", "diagnose_thinkcell",
+        "set_deck_branding", "list_color_palettes", "convert_to_pptx",
+        "validate_ppttc", "list_chart_types", "diagnose_thinkcell",
     ]
     for name in tools:
         check(f"server: tool '{name}' is defined", hasattr(server, name))
@@ -789,6 +847,7 @@ def main() -> int:
         test_validator_percentage,
         test_autodeck,
         test_branding,
+        test_palettes,
         test_server_smoke,
         test_build_presentation,
     ]
