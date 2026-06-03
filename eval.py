@@ -498,6 +498,93 @@ def section_palettes(score: Score) -> None:
 
 
 # --------------------------------------------------------------------------
+# Section J -- autodeck semantic auto-colouring (HEADROOM)
+# --------------------------------------------------------------------------
+def _auto_semantic_doc(values: list[Any], **series_opts: Any) -> Any:
+    """Build a one-slide auto-deck whose right (number) series asks for
+    semantic colouring, and return its parsed .ppttc (or None)."""
+    cats = [f"2024-{m + 1:02d}-01" for m in range(len(values))]
+    slide = {
+        "slide_title": "Variance",
+        "right_chart": {
+            "categories": cats,
+            "series": [{"name": "Delta", "values": values, **series_opts}],
+        },
+    }
+    result, _ = _safe(lambda: build_auto_deck([slide], "eval_semantic"))
+    if not result or not result.get("success"):
+        return None
+    path = result.get("ppttc_path")
+    if not path or not Path(path).is_file():
+        return None
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _number_cells(doc: Any) -> list[dict[str, Any]]:
+    """Pull the per-point cells of the first numeric series from an auto-deck."""
+    entry = doc[0]["data"]
+    chart = next(e for e in entry if e["name"] == "RightChart")
+    # table = [header, [series_name, cell, cell, ...]]
+    return [c for c in chart["table"][1][1:] if isinstance(c, dict)]
+
+
+def section_autodeck_semantic(score: Score) -> None:
+    """A series flagged ``semantic`` must colour each bar by its sign, and an
+    explicit ``fill`` must still win. Colours are checked against palettes."""
+    pal, _ = _safe(lambda: __import__("palettes"))
+    sem = getattr(pal, "SEMANTIC", {}) if pal else {}
+
+    doc = _auto_semantic_doc([100.0, -40.0, 0.0], semantic=True)
+    cells = _number_cells(doc) if doc else []
+    ok = (
+        len(cells) == 3
+        and cells[0].get("fill") == sem.get("positive")
+        and cells[1].get("fill") == sem.get("negative")
+        and cells[2].get("fill") == sem.get("neutral")
+    )
+    score.add("autodeck semantic series colours bars by sign", ok, 6)
+
+    # reverse=True: a drop should now read as good (teal).
+    doc = _auto_semantic_doc([-40.0, 50.0], semantic=True, reverse=True)
+    cells = _number_cells(doc) if doc else []
+    rev_ok = (
+        len(cells) == 2
+        and cells[0].get("fill") == sem.get("positive")
+        and cells[1].get("fill") == sem.get("negative")
+    )
+    score.add("autodeck semantic respects reverse (down is good)", rev_ok, 4)
+
+    # An explicit fill must override semantic colouring.
+    doc = _auto_semantic_doc([-40.0, 50.0], semantic=True, fill="#123456")
+    cells = _number_cells(doc) if doc else []
+    override_ok = bool(cells) and all(
+        c.get("fill") == "#123456" for c in cells
+    )
+    score.add("autodeck explicit fill overrides semantic", override_ok, 3)
+
+    # Plain series (no flag) must stay uncoloured -- no behaviour change.
+    doc = _auto_semantic_doc([10.0, 20.0])
+    cells = _number_cells(doc) if doc else []
+    plain_ok = bool(cells) and all("fill" not in c for c in cells)
+    score.add("autodeck leaves un-flagged series uncoloured", plain_ok, 2)
+
+    # A non-boolean semantic flag must be rejected, not silently ignored.
+    bad_slide = {
+        "slide_title": "Bad",
+        "right_chart": {
+            "categories": ["2024-01-01", "2024-02-01"],
+            "series": [{"name": "D", "values": [1, 2], "semantic": "yes"}],
+        },
+    }
+    res, _ = _safe(lambda: build_auto_deck([bad_slide], "eval_badflag"))
+    score.add(
+        "autodeck rejects a non-boolean semantic flag",
+        bool(res) and res.get("success") is False,
+        2,
+    )
+
+
+# --------------------------------------------------------------------------
 # cost / size of the editable surface
 # --------------------------------------------------------------------------
 def editable_loc() -> int:
@@ -537,6 +624,8 @@ def main() -> int:
     section_mekko(score)
     print("== Section I: colour system (palettes + semantic fills) ==")
     section_palettes(score)
+    print("== Section J: autodeck semantic auto-colouring ==")
+    section_autodeck_semantic(score)
     score.report()
 
     loc = editable_loc()

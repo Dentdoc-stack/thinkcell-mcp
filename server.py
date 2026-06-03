@@ -379,6 +379,11 @@ def create_auto_deck(
               series object has ``name`` (str), ``values`` (list of numbers,
               one per category) and an optional ``fill`` (hex colour like
               ``"#ff0000"`` applied to every point of that series).
+              For RAG-style colouring, set ``semantic`` (bool) on a series to
+              colour each bar by the sign of its value -- gains teal, losses
+              red, zero gray (great for variance/bridge/delta charts). Add
+              ``reverse`` (bool) when down is good (cost, churn) to flip the
+              colours. An explicit ``fill`` always overrides ``semantic``.
 
         output_name: Filename stem for the generated ``.ppttc`` file. The file
             is written to the project's ``output/`` folder.

@@ -752,6 +752,56 @@ def test_palettes() -> None:
 
 
 # --------------------------------------------------------------------------
+# autodeck: semantic auto-colouring of a series by sign
+# --------------------------------------------------------------------------
+def test_autodeck_semantic() -> None:
+    from palettes import SEMANTIC
+
+    def number_cells(result):
+        doc = json.loads(open(result["ppttc_path"], encoding="utf-8").read())
+        chart = next(e for e in doc[0]["data"] if e["name"] == "RightChart")
+        return [c for c in chart["table"][1][1:] if isinstance(c, dict)]
+
+    def deck(values, **opts):
+        cats = [f"2024-{m + 1:02d}-01" for m in range(len(values))]
+        return build_auto_deck([{
+            "slide_title": "Variance",
+            "right_chart": {
+                "categories": cats,
+                "series": [{"name": "Delta", "values": values, **opts}],
+            },
+        }], "_test_semantic")
+
+    res = deck([100.0, -40.0, 0.0], semantic=True)
+    check("autodeck semantic: build succeeds", res["success"])
+    cells = number_cells(res)
+    check("autodeck semantic: gain bar is teal", cells[0]["fill"] == SEMANTIC["positive"])
+    check("autodeck semantic: loss bar is red", cells[1]["fill"] == SEMANTIC["negative"])
+    check("autodeck semantic: zero bar is gray", cells[2]["fill"] == SEMANTIC["neutral"])
+
+    res = deck([-40.0, 50.0], semantic=True, reverse=True)
+    cells = number_cells(res)
+    check("autodeck semantic: reverse makes a drop teal", cells[0]["fill"] == SEMANTIC["positive"])
+
+    res = deck([-40.0, 50.0], semantic=True, fill="#123456")
+    cells = number_cells(res)
+    check(
+        "autodeck semantic: explicit fill overrides",
+        all(c["fill"] == "#123456" for c in cells),
+    )
+
+    res = deck([10.0, 20.0])
+    cells = number_cells(res)
+    check(
+        "autodeck semantic: un-flagged series stays uncoloured",
+        all("fill" not in c for c in cells),
+    )
+
+    res = deck([1, 2], semantic="yes")
+    check("autodeck semantic: non-boolean flag rejected", not res["success"])
+
+
+# --------------------------------------------------------------------------
 # server: every MCP tool is importable (the eval's invariant check)
 # --------------------------------------------------------------------------
 def test_server_smoke() -> None:
@@ -848,6 +898,7 @@ def main() -> int:
         test_autodeck,
         test_branding,
         test_palettes,
+        test_autodeck_semantic,
         test_server_smoke,
         test_build_presentation,
     ]

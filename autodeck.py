@@ -41,6 +41,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from palettes import semantic_fill
+
 # The official think-cell automation template, kept under templates/. Resolved
 # relative to THIS file so it works regardless of the process working dir.
 MODULE_DIR = Path(__file__).resolve().parent
@@ -191,6 +193,20 @@ def _validate_chart(
                 f"got {fill!r}"
             )
 
+        # Optional semantic auto-colouring: colour each bar by the sign of its
+        # value (gain teal / loss red / zero gray). This is the RAG-by-delta
+        # idea applied to think-cell -- ideal for variance, bridge and delta
+        # charts. An explicit `fill` always wins over it. `reverse` flips the
+        # mapping for "down is good" metrics (cost, churn, defects).
+        semantic = entry.get("semantic", False)
+        reverse = entry.get("reverse", False)
+        if not isinstance(semantic, bool):
+            errors.append(f"{s_where}.semantic must be true or false")
+            semantic = False
+        if not isinstance(reverse, bool):
+            errors.append(f"{s_where}.reverse must be true or false")
+            reverse = False
+
         row: list[Any] = [{"string": s_name}]
         for v_index, value in enumerate(values):
             if not isinstance(value, (int, float)) or isinstance(value, bool):
@@ -208,6 +224,8 @@ def _validate_chart(
             cell: dict[str, Any] = {value_key: value}
             if isinstance(fill, str) and _FILL_RE.match(fill):
                 cell["fill"] = fill
+            elif semantic:
+                cell["fill"] = semantic_fill(value, reverse=reverse)
             row.append(cell)
         parsed_series.append(row)
 
