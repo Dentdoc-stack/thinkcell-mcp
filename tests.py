@@ -772,31 +772,40 @@ def test_autodeck_semantic() -> None:
             },
         }], "_test_semantic")
 
-    res = deck([100.0, -40.0, 0.0], semantic=True)
-    check("autodeck semantic: build succeeds", res["success"])
-    cells = number_cells(res)
-    check("autodeck semantic: gain bar is teal", cells[0]["fill"] == SEMANTIC["positive"])
-    check("autodeck semantic: loss bar is red", cells[1]["fill"] == SEMANTIC["negative"])
-    check("autodeck semantic: zero bar is gray", cells[2]["fill"] == SEMANTIC["neutral"])
+    # The colour checks read the generated .ppttc back from disk, which needs
+    # the bundled think-cell template. Skip them where it is unavailable (e.g.
+    # CI without a think-cell install); the validation check below runs always.
+    if ensure_auto_template():
+        res = deck([100.0, -40.0, 0.0], semantic=True)
+        check("autodeck semantic: build succeeds", res["success"])
+        cells = number_cells(res)
+        check("autodeck semantic: gain bar is teal", cells[0]["fill"] == SEMANTIC["positive"])
+        check("autodeck semantic: loss bar is red", cells[1]["fill"] == SEMANTIC["negative"])
+        check("autodeck semantic: zero bar is gray", cells[2]["fill"] == SEMANTIC["neutral"])
 
-    res = deck([-40.0, 50.0], semantic=True, reverse=True)
-    cells = number_cells(res)
-    check("autodeck semantic: reverse makes a drop teal", cells[0]["fill"] == SEMANTIC["positive"])
+        res = deck([-40.0, 50.0], semantic=True, reverse=True)
+        cells = number_cells(res)
+        check("autodeck semantic: reverse makes a drop teal", cells[0]["fill"] == SEMANTIC["positive"])
 
-    res = deck([-40.0, 50.0], semantic=True, fill="#123456")
-    cells = number_cells(res)
-    check(
-        "autodeck semantic: explicit fill overrides",
-        all(c["fill"] == "#123456" for c in cells),
-    )
+        res = deck([-40.0, 50.0], semantic=True, fill="#123456")
+        cells = number_cells(res)
+        check(
+            "autodeck semantic: explicit fill overrides",
+            all(c["fill"] == "#123456" for c in cells),
+        )
 
-    res = deck([10.0, 20.0])
-    cells = number_cells(res)
-    check(
-        "autodeck semantic: un-flagged series stays uncoloured",
-        all("fill" not in c for c in cells),
-    )
+        res = deck([10.0, 20.0])
+        cells = number_cells(res)
+        check(
+            "autodeck semantic: un-flagged series stays uncoloured",
+            all("fill" not in c for c in cells),
+        )
+    else:
+        print("  SKIP: autodeck semantic colouring checks "
+              "(think-cell template unavailable)")
 
+    # Input validation runs before the template check inside build_auto_deck,
+    # so this rejection holds regardless of whether the template is present.
     res = deck([1, 2], semantic="yes")
     check("autodeck semantic: non-boolean flag rejected", not res["success"])
 
