@@ -11,11 +11,40 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-# think-cell install directory. Override with the THINKCELL_DIR environment
-# variable when think-cell is installed somewhere other than the default.
-THINKCELL_DIR = os.environ.get(
-    "THINKCELL_DIR", r"C:\Program Files (x86)\think-cell"
-)
+DEFAULT_THINKCELL_DIR = r"C:\Program Files (x86)\think-cell"
+
+
+def find_thinkcell_dir() -> str:
+    """think-cell's install directory: the THINKCELL_DIR environment variable,
+    else the install location Windows records for think-cell (it can be
+    installed anywhere, e.g. D:\\thinkcell), else the default folder."""
+    if os.environ.get("THINKCELL_DIR"):
+        return os.environ["THINKCELL_DIR"]
+    try:
+        import winreg
+    except ImportError:  # not Windows
+        return DEFAULT_THINKCELL_DIR
+    uninstall = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+    for hive, path in ((winreg.HKEY_LOCAL_MACHINE, uninstall),
+                       (winreg.HKEY_LOCAL_MACHINE, uninstall.replace("SOFTWARE", r"SOFTWARE\WOW6432Node")),
+                       (winreg.HKEY_CURRENT_USER, uninstall)):
+        try:
+            with winreg.OpenKey(hive, path) as root:
+                for index in range(winreg.QueryInfoKey(root)[0]):
+                    with winreg.OpenKey(root, winreg.EnumKey(root, index)) as app:
+                        try:
+                            name = winreg.QueryValueEx(app, "DisplayName")[0]
+                            location = winreg.QueryValueEx(app, "InstallLocation")[0]
+                        except OSError:
+                            continue
+                        if name == "think-cell" and location and (Path(location) / "ppttc.exe").is_file():
+                            return location.rstrip("\\")
+        except OSError:
+            continue
+    return DEFAULT_THINKCELL_DIR
+
+
+THINKCELL_DIR = find_thinkcell_dir()
 
 # Default location of the think-cell command-line converter.
 PPTTC_EXE = str(Path(THINKCELL_DIR) / "ppttc.exe")

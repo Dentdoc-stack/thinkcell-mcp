@@ -1,0 +1,56 @@
+{
+  "manifest_version": "0.4",
+  "name": "thinkcell-mcp",
+  "display_name": "think-cell charts (unofficial)",
+  "version": "0.2.0",
+  "description": "Build real, editable think-cell charts and decks in PowerPoint from plain data.",
+  "long_description": "Turns data into think-cell slides through think-cell's own JSON automation (ppttc): bar, stacked, line, waterfall, Mekko, scatter, area, combo, table and process charts, or whole decks with no template setup. It can also fill any chart from think-cell's own chart library, or a slide of your own saved as a template. It can read data from Excel or CSV and insert the finished slides into the deck open in PowerPoint; the charts stay editable in think-cell.\n\nNeeds Windows, PowerPoint and a licensed think-cell install with JSON data automation (think-cell AI Suite in the current manual). Independent project, not affiliated with or endorsed by think-cell Sales GmbH & Co. KG.",
+  "author": {
+    "name": "thinkcell-mcp contributors"
+  },
+  "license": "MIT",
+  "icon": "icon.png",
+  "keywords": ["think-cell", "powerpoint", "charts", "pptx", "slides", "automation"],
+  "server": {
+    "type": "uv",
+    "entry_point": "server.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": ["run", "--directory", "${__dirname}", "server.py"],
+      "env": {
+        "THINKCELL_OUTPUT_DIR": "${user_config.output_folder}"
+      }
+    }
+  },
+  "user_config": {
+    "output_folder": {
+      "type": "directory",
+      "title": "Output folder",
+      "description": "Where the generated .ppttc and .pptx files are saved.",
+      "default": "${DOCUMENTS}${/}think-cell",
+      "required": true
+    }
+  },
+  "tools": [
+    {"name": "create_auto_deck", "description": "Build a multi-slide think-cell deck from data, no template setup"},
+    {"name": "create_chart", "description": "Build one think-cell chart for a named template"},
+    {"name": "build_presentation", "description": "Combine several charts and slides into one deck"},
+    {"name": "convert_to_pptx", "description": "Run think-cell to produce the PowerPoint file"},
+    {"name": "insert_into_powerpoint", "description": "Put the finished slides into the deck open in PowerPoint"},
+    {"name": "import_chart_data", "description": "Read chart data from an Excel or CSV file"},
+    {"name": "set_deck_branding", "description": "Recolour the auto-deck template and drop the logo"},
+    {"name": "list_color_palettes", "description": "List the built-in colour palettes"},
+    {"name": "list_chart_types", "description": "Describe every supported chart type"},
+    {"name": "validate_ppttc", "description": "Check a .ppttc file's structure"},
+    {"name": "diagnose_thinkcell", "description": "Find out why think-cell automation is not working"},
+    {"name": "list_chart_templates", "description": "List think-cell's chart library and your saved slide templates"},
+    {"name": "fill_chart_template", "description": "Fill a library or saved slide template with your data"},
+    {"name": "template_from_slide", "description": "Save one of your own think-cell slides as a reusable template"}
+  ],
+  "compatibility": {
+    "platforms": ["win32"],
+    "runtimes": {
+      "python": ">=3.10"
+    }
+  }
+}

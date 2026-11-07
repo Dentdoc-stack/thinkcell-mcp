@@ -20,8 +20,10 @@ from .base import (
 from .combo import ComboChart
 from .line import LineChart
 from .mekko import MekkoChart
+from .process import ProcessChart
 from .scatter import ScatterChart
 from .stacked_bar import StackedBarChart
+from .table import TableChart
 from .waterfall import WaterfallChart
 
 # Public chart-type name -> builder class. Order is preserved for catalogs.
@@ -34,6 +36,8 @@ CHART_BUILDERS: dict[str, type[ChartBuilder]] = {
     "mekko": MekkoChart,
     "area": AreaChart,
     "combo": ComboChart,
+    "table": TableChart,
+    "process": ProcessChart,
 }
 
 __all__ = [

@@ -35,26 +35,27 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import re
+import os
 import shutil
 from pathlib import Path
 from typing import Any
 
+from converter import find_thinkcell_dir
 from palettes import semantic_fill
 
 # The official think-cell automation template, kept under templates/. Resolved
 # relative to THIS file so it works regardless of the process working dir.
 MODULE_DIR = Path(__file__).resolve().parent
 AUTO_TEMPLATE_PATH = MODULE_DIR / "templates" / "thinkcell_auto.pptx"
-OUTPUT_DIR = MODULE_DIR / "output"
+# Generated .ppttc/.pptx files; THINKCELL_OUTPUT_DIR moves them (the desktop
+# extension points it at a folder the user picks).
+OUTPUT_DIR = Path(os.environ.get("THINKCELL_OUTPUT_DIR") or MODULE_DIR / "output")
 
 # think-cell installs an identical automation template under its program
 # folder. We copy it from there on first use rather than redistributing
 # think-cell's own file. Override the install dir with THINKCELL_DIR.
-THINKCELL_DIR = Path(
-    os.environ.get("THINKCELL_DIR", r"C:\Program Files (x86)\think-cell")
-)
+THINKCELL_DIR = Path(find_thinkcell_dir())
 _INSTALL_TEMPLATE = THINKCELL_DIR / "ppttc" / "template.pptx"
 
 

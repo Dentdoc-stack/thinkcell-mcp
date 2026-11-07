@@ -1,0 +1,23 @@
+# Not part of the Claude Desktop extension (npx @anthropic-ai/mcpb pack)
+.git/
+.github/
+.venv/
+__pycache__/
+dist/
+output/*
+templates/*.pptx
+templates/library/
+templates/user/
+tests.py
+eval.py
+program.md
+CLAUDE.md
+CHANGELOG.md
+CONNECTOR.md
+.mcp.json
+.mcp.json.example
+*.local.bat
+*.ppttc
+*.pptx
+results.tsv
+eval.log

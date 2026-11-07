@@ -202,8 +202,20 @@ def _validate_cell(cell: Any, where: str) -> list[str]:
             errors.append(
                 f"{where}.{type_key} must be a string, got {_typename(value)}"
             )
+        elif type_key == "date" and not _is_iso_date(value):
+            # think-cell manual, Cell data types: required format "YYYY-MM-DD".
+            errors.append(f"{where}.date must be an ISO date YYYY-MM-DD, got {value!r}")
 
     return errors
+
+
+def _is_iso_date(value: str) -> bool:
+    import datetime
+
+    try:
+        return len(value) == 10 and datetime.date.fromisoformat(value) is not None
+    except ValueError:
+        return False
 
 
 def _typename(value: Any) -> str:

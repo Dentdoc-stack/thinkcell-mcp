@@ -35,7 +35,100 @@
 
 ### Registro de aprendizajes
 
-<!-- Agrega nuevas entradas arriba de esta línea. -->
+- **2026-11-08 — Plantillas de gráficos sin nombrar a mano (`library.py`):**
+  los nombres de think-cell viven en el OLE `ppt/embeddings/oleObject*.bin`,
+  stream `think-cellXML`, como `<m_strName>` dentro de cada
+  `CSequenceChartSE|CPieChartSE|CScatterChartSE`; se reescriben con
+  `pythoncom` (structured storage) y `ppttc.exe` los acepta. Las categorías se
+  leen del datasheet (`m_dtable` → primer `<ocol>` → vectores); en archivos de
+  think-cell las fuentes van por `idref`, pero tras pasar por ppttc quedan
+  INLINE (hay que leer ambas). Los `.potx` se abren con python-pptx cambiando
+  el content type en `[Content_Types].xml`. **Por qué importa:** cualquier
+  slide (biblioteca instalada o deck del usuario) se vuelve plantilla sin
+  abrir PowerPoint.
+
+- **2026-11-08 — Fila "100%=" del datasheet:** si el gráfico la tiene (Mekko,
+  algunos 100%), la segunda fila del JSON es la de totales; si falta, la
+  primera serie desaparece, y si sobra en otro gráfico aparece una serie
+  falsa. Se detecta cuando la fuente `m_varsrcAbsoluteExtent` del primer
+  vector contiene `<m_precInitial` (celda formateada). Comparar total vs suma
+  de columnas da falsos positivos (línea, combinación). Gantt (`CGanttSE`)
+  queda fuera: ppttc rompe el eje de fechas. **Por qué importa:**
+  `fill_template` añade el total de la plantilla solo; probarlo visualmente.
+
+- **2026-11-08 — ngrok detrás de Norton Web Shield:** el agente ngrok falla
+  con `x509: certificate signed by unknown authority`: Norton re-firma la
+  conexión a `connect.ngrok-agent.com` con su "Untrusted Root" (ngrok usa CA
+  propia), así que `agent.connect_cas: host` no sirve. Solo funciona una
+  exclusión de `ngrok.exe` en el Web Shield (la pone el usuario). Además, el
+  ngrok de la Microsoft Store guarda `ngrok.yml` virtualizado en
+  `%LOCALAPPDATA%\Packages\ngrok.ngrok_*\LocalCache\Local\ngrok`, y el panel
+  de terminal de Claude no permite pegar en `getpass`. **Por qué importa:**
+  diagnosticar con el log antes de tocar configs; ofrecer
+  `ngrok config add-authtoken` como alternativa al prompt oculto.
+
+- **2026-11-07 — think-cell Assist como cliente MCP:** Assist conecta desde el
+  navegador (origen `https://app.prod.ai.think-cell.com`) y solo admite
+  cabeceras fijas (API key), no OAuth. `_browser_access` responde el preflight
+  CORS antes de la autenticación (el navegador no manda credenciales en
+  OPTIONS), devuelve 403 a otros `Origin` (la spec MCP lo exige) y 405 a
+  GET/DELETE en `/mcp` (stateless). La API key entra como Bearer en
+  `ConnectorAuth.load_access_token`. **Por qué importa:** sin preflight el
+  indicador de Assist sale rojo; el formulario `/connect` postea desde el
+  propio origen del servidor, que debe estar permitido. Con ngrok gratis hay
+  que mandar `ngrok-skip-browser-warning`.
+
+- **2026-11-07 — MCP 2026-07-28 (dual-era) sin migrar a mcp 2.x:** la spec
+  nueva es stateless (sin `initialize` ni `Mcp-Session-Id`, versión en
+  `params._meta`, `server/discover` obligatorio). El SDK 1.29 solo habla hasta
+  2025-11-25, así que `modern_http.modern_era` intercepta en `/mcp` los POST
+  con `_meta` moderno y reutiliza los handlers del SDK
+  (`mcp._mcp_server.request_handlers[ListToolsRequest/CallToolRequest]`, que
+  validan esquemas); lo demás pasa intacto al SDK (se re-inyecta el body).
+  Orden: 401 → -32020 (cabeceras) → -32022 (versión) → 202 notificación →
+  método (404 si no existe). stdio sigue solo-legacy. **Por qué importa:**
+  mcp 2.x elimina `mcp.server.fastmcp`; este wrapper evita esa reescritura.
+  Al migrar algún día, borrar `modern_http.py`.
+
+- **2026-11-07 — Norton rompe respuestas HTTP locales con Content-Length:**
+  Norton 360 (Web/Mail Shield) intercepta HTTP y HTTPS incluso en 127.0.0.1 y
+  convierte toda respuesta con `Content-Length` a POST en una chunked sin fin;
+  el túnel lo reporta como 520 ("unexpected EOF") en el 202 de
+  `notifications/initialized`. Las respuestas que uvicorn ya envía chunked
+  pasan intactas. Fix: `_chunked_only` quita `Content-Length` en modo `--http`.
+  **Por qué importa:** sin él el conector se conecta pero falla en la segunda
+  llamada; h11/uvicorn no tienen la culpa (h11 en proceso es correcto).
+
+- **2026-11-07 — Conector remoto (`--http`) con OAuth:** los conectores de
+  Claude (PowerPoint/claude.ai) se llaman desde la nube de Anthropic: hace
+  falta HTTPS público (ngrok, dominio estático gratis) y no hay servicio
+  hospedado posible (think-cell vive en el PC del usuario). La entrada es
+  OAuth 2.1 del SDK (`oauth.py`, `ConnectorAuth`): Claude se registra solo,
+  `/authorize` manda a `/connect` y el usuario escribe el *connect code*.
+  Tokens guardados solo como hash. FastMCP con host 127.0.0.1 rechaza el Host
+  del túnel: se desactiva la protección DNS-rebinding. **Por qué importa:**
+  sin OAuth no aparece el botón Connect; en modo remoto toda ruta pasa por
+  `_local_paths` (`output/`, `templates/`, carpetas de `connector.py setup`).
+
+- **2026-11-07 — Extensión `.mcpb` de Claude Desktop:** `manifest.json` con
+  `server.type "uv"`: Claude Desktop instala Python y las dependencias desde
+  `pyproject.toml`, así que este debe listar TODAS (faltaban `openpyxl` y
+  `pywin32`). `build_mcpb.py` empaqueta (zip) respetando `.mcpbignore`; no
+  hace falta `npx @anthropic-ai/mcpb`. **Por qué importa:** si un módulo o
+  dependencia falta en `pyproject.toml`, la extensión no arranca aunque
+  `python server.py` funcione en local.
+
+- **2026-11-07 — Descarga de ngrok bloqueada:** la URL antigua (equinox) da
+  403 y la nueva (`bin.ngrok.com`) la corta el antivirus a mitad de descarga.
+  `connector.py setup` intenta descargar y, si falla, explica cómo
+  instalarlo a mano (Microsoft Store o ngrok.com). **Por qué importa:** no
+  dar por hecho que la descarga automática funciona en PCs con Norton/Avast.
+
+- **2026-11-07 — think-cell fuera de la ruta por defecto:** puede instalarse
+  en cualquier carpeta. `find_thinkcell_dir()` lee
+  `InstallLocation` de las claves `Uninstall` del registro (HKLM, WOW6432Node,
+  HKCU) antes de caer al valor por defecto. **Por qué importa:**
+  `THINKCELL_DIR` ya no es necesario en instalaciones normales.
 
 - **2026-05-16 — `create_auto_deck` acepta ejes categóricos:** `_validate_chart`
   ya no exige fechas ISO. Si TODAS las categorías de un gráfico son
@@ -99,7 +192,7 @@
 
 ## Qué es este proyecto
 
-Servidor MCP que expone **8 herramientas** sobre stdio:
+Servidor MCP que expone **14 herramientas** (stdio, `--http` para el conector remoto); las principales:
 
 | Herramienta | Propósito |
 | --- | --- |
@@ -111,6 +204,8 @@ Servidor MCP que expone **8 herramientas** sobre stdio:
 | `validate_ppttc` | Validar estructuralmente un documento `.ppttc`. |
 | `list_chart_types` | Describir cada tipo de gráfico soportado. |
 | `diagnose_thinkcell` | Diagnosticar por qué la automatización no funciona. |
+| `list_chart_templates` / `fill_chart_template` | Biblioteca de gráficos de think-cell (34 plantillas) y slides propios guardados. |
+| `template_from_slide` | Guardar un slide propio como plantilla (nombra los gráficos en código). |
 
 8 tipos de gráfico: `waterfall`, `bar`, `stacked_bar`, `line`, `scatter`,
 `mekko`, `area`, `combo`.
@@ -182,7 +277,7 @@ señal objetiva, reproducible, de una sola orden.
 **Invariantes — el loop NUNCA debe romperlos** (equivalen al `prepare.py` que
 autoresearch prohíbe tocar):
 
-- Los 8 tools MCP siguen registrados e importables (`test_server_smoke`).
+- Los 14 tools MCP siguen registrados e importables (`test_server_smoke`).
 - No se redistribuyen archivos de think-cell: la plantilla se copia del
   install local.
 - Toda herramienta devuelve dicts estructurados; nunca lanza excepción para
@@ -211,7 +306,8 @@ autoresearch prohíbe tocar):
 
 ```
 Thinkcell/
-  server.py          8 herramientas MCP (FastMCP, stdio)
+  server.py          14 herramientas MCP (FastMCP, stdio / --http)
+  library.py         biblioteca de plantillas think-cell (cortar, nombrar, rellenar)
   autodeck.py        constructor de .ppttc sin-setup (create_auto_deck)
   branding.py        re-tematiza la plantilla auto-deck (set_deck_branding)
   converter.py       wrapper de ppttc.exe

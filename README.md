@@ -1,9 +1,15 @@
 # think-cell MCP Server
 
 An [MCP](https://modelcontextprotocol.io) server that wraps think-cell's JSON
-data automation. It lets Claude build think-cell automation files (`.ppttc`)
-from plain data and convert them into PowerPoint decks (`.pptx`) using
-think-cell's `ppttc.exe`.
+data automation. Claude builds think-cell automation files (`.ppttc`) from
+plain data and turns them into PowerPoint decks (`.pptx`) with think-cell's
+`ppttc.exe`. The charts stay real, editable think-cell charts.
+
+Use it in three ways:
+
+- **Claude Desktop:** a one-click extension (`.mcpb`).
+- **Claude in PowerPoint and claude.ai:** a connector that runs on your own PC.
+- **Claude Code or any MCP client:** a plain stdio server.
 
 ## Tools
 
@@ -13,57 +19,71 @@ think-cell's `ppttc.exe`.
 | `build_presentation` | Combine many charts/slides into one `.ppttc` file. |
 | `create_auto_deck` | Build a multi-slide `.ppttc` deck with **no template setup**. |
 | `set_deck_branding` | Recolour the auto-deck template and drop the think-cell logo. |
+| `list_color_palettes` | List the built-in colour palettes. |
+| `import_chart_data` | Read chart data from an Excel or CSV file. |
 | `convert_to_pptx` | Run `ppttc.exe` to turn a `.ppttc` into a `.pptx`. |
+| `insert_into_powerpoint` | Insert the finished slides into the deck open in PowerPoint. |
 | `validate_ppttc` | Structurally validate a `.ppttc` document. |
 | `list_chart_types` | Describe every supported chart type. |
 | `diagnose_thinkcell` | Check why think-cell automation isn't working. |
+| `list_chart_templates` | List think-cell's chart library (34 designs) and your saved slides. |
+| `fill_chart_template` | Fill one of those templates with your data, title and texts. |
+| `template_from_slide` | Save a think-cell slide of your own as a reusable template. |
 
 Supported chart types: `waterfall`, `bar`, `stacked_bar`, `line`, `scatter`,
-`mekko`, `area`, `combo`.
+`mekko`, `area`, `combo`, `table`, `process`.
 
 ## Requirements
 
-- **Windows** with [think-cell](https://www.think-cell.com/) installed — a
-  separately licensed product. It provides `ppttc.exe`, by default under
-  `C:\Program Files (x86)\think-cell`. Set the `THINKCELL_DIR` environment
-  variable if think-cell is installed elsewhere.
-- **Python 3.10+**.
-- **Microsoft PowerPoint** — `ppttc.exe` drives it during conversion.
+- **Windows** with [think-cell](https://www.think-cell.com/) installed. It is a
+  separately licensed product, and JSON automation needs a licence that
+  includes it (think-cell AI Suite in the current manual). The server finds the install folder from the Windows registry. Set
+  the `THINKCELL_DIR` environment variable only if that fails.
+- **Microsoft PowerPoint**, which `ppttc.exe` drives during conversion.
+- **Python 3.10+**, except with the Claude Desktop extension, which brings its
+  own.
 
-> Building and validating `.ppttc` files works on any OS. Only
-> `convert_to_pptx` and `diagnose_thinkcell` require Windows + think-cell +
-> PowerPoint.
+> Building and validating `.ppttc` files works on any OS. Converting to
+> `.pptx` and diagnostics need Windows, think-cell and PowerPoint.
 
-## Installation
+## Install
 
-1. Clone the repository and enter it:
+### Claude Desktop: one-click extension
 
-   ```powershell
-   git clone https://github.com/Hectirry/thinkcell-mcp.git
-   cd thinkcell-mcp
-   ```
+1. Download `thinkcell-mcp-<version>.mcpb` from the
+   [Releases](https://github.com/Dentdoc-stack/thinkcell-mcp/releases) page.
+2. Double-click it, or go to Claude Desktop → *Settings → Extensions* and
+   install it there.
+3. Pick the folder where the generated files go. The default is
+   `Documents\think-cell`.
 
-2. Install the dependencies:
+Claude Desktop installs Python and the dependencies itself. To build the file
+yourself, run `python build_mcpb.py`; it writes `dist\thinkcell-mcp-<version>.mcpb`.
 
-   ```powershell
-   python -m pip install -r requirements.txt
-   ```
+### Claude in PowerPoint and claude.ai: connector
 
-3. (Optional) Confirm the server starts — it waits on stdio; press `Ctrl+C`
-   to stop:
+Your PC runs the server, and a free ngrok address makes it reachable. Claude
+adds it under *Settings → Connectors* and you approve it with a connect code:
 
-   ```powershell
-   python server.py
-   ```
+```powershell
+python connector.py setup
+```
 
-## Register with Claude
+The full walkthrough, security notes and troubleshooting are in
+[CONNECTOR.md](CONNECTOR.md).
+The same connector also works with **think-cell Assist** in PowerPoint and
+Excel. Run `python connector.py assist` to get its settings.
 
-The server speaks MCP over **stdio**. Add the block below to the `mcpServers`
-section of your Claude configuration, adjusting the paths for your machine.
+### Claude Code or any MCP client: stdio
 
-- **Claude Desktop:** edit `%APPDATA%\Claude\claude_desktop_config.json`.
-- **Claude Code / VS Code:** copy `.mcp.json.example` to `.mcp.json`, or run
-  `claude mcp add`.
+```powershell
+git clone https://github.com/Dentdoc-stack/thinkcell-mcp.git
+cd thinkcell-mcp
+python -m pip install -r requirements.txt
+```
+
+Then register it. For Claude Code, copy `.mcp.json.example` to `.mcp.json` or
+run `claude mcp add`. For other clients, add this to their `mcpServers`:
 
 ```json
 {
@@ -76,10 +96,9 @@ section of your Claude configuration, adjusting the paths for your machine.
 }
 ```
 
-`command` must resolve to a Python 3.10+ interpreter — use the full path to
-`python.exe` if `python` is not on your `PATH`. If you already have other
-servers, add only the inner `"thinkcell": { ... }` entry. Restart Claude
-after editing the config.
+`command` must resolve to a Python 3.10+ interpreter. Use the full path to
+`python.exe` if `python` is not on your `PATH`. Set `THINKCELL_OUTPUT_DIR` in
+an `env` block to save the generated files somewhere other than `output/`.
 
 ## Quickstart
 
@@ -200,6 +219,48 @@ parts (the theme and the slide master), not in the named think-cell elements,
 so re-skinning never affects automation. Use **`set_deck_branding`** to apply
 your own accent colours or to toggle the logo. Per-series `fill` values in
 `create_auto_deck` still override the palette for individual series.
+
+## Chart library and your own slides
+
+`create_auto_deck` covers line and column charts. For everything else think-cell
+can draw, the template tools reuse real think-cell slides:
+
+- **think-cell's chart library.** On first use `library.py` cuts every slide of
+  the chart library that ships with think-cell (`<THINKCELL_DIR>/templates/
+  think-cell Charts/*.potx`) into `templates/library/`, one template per slide,
+  and names its charts `c1`, `c2`, … in reading order. That gives 34 designs:
+  stacked, 100%, clustered and combination columns and bars, butterfly, line,
+  area, football field, box plot, candlestick, both Mekko kinds, pie, doughnut,
+  bar-of-pie, scatter, bubble, waterfalls, funnel, and CAGR, difference and
+  value-line annotations. Gantt charts are left out because `ppttc.exe` garbles
+  their date axis. Nothing is redistributed; the files are copied from your
+  install.
+- **Your own slides.** `template_from_slide` copies one slide of your deck,
+  names its think-cell charts in code (no clicking in PowerPoint) and saves it
+  as `templates/user/<name>.pptx`. With no path it uses the deck open in
+  PowerPoint. From then on `fill_chart_template("user/<name>", …)` rebuilds
+  that slide, in its own style, with new data.
+
+`fill_chart_template` takes one entry per chart name:
+
+```json
+{"c1": {"categories": ["2025", "2026"],
+        "series": [{"name": "Sales", "values": [10, 12]}]}}
+```
+
+- `"percent": true` writes percentage cells.
+- Pie: one category and one series per segment. Scatter: categories
+  `["X", "Y"]` (plus `"Size"` for bubbles) and one series per point.
+- Waterfall: `"e"` as a value draws a total bar.
+- Charts with think-cell's "100%=" datasheet row (Mekko, some 100% charts)
+  get it filled automatically from the template; pass `"total"` to override.
+- `"table"` passes a raw `.ppttc` data table through unchanged.
+- `title` sets the slide title; `texts` maps a text box's current text to new
+  text (`""` deletes the box, `
+` starts a new line).
+
+The result says which charts verifiably took the data (`filled`,
+`not_filled`, `not_checked`).
 
 ## Tool reference and examples
 
@@ -496,6 +557,12 @@ thinkcell-mcp/
   converter.py         ppttc.exe wrapper with structured error handling
   validator.py         .ppttc JSON structural validation
   diagnostics.py       think-cell environment diagnostics (registry/files)
+  data_import.py       Excel/CSV reader (import_chart_data)
+  layout.py, palettes.py  auto-deck layouts and colour palettes
+  connector.py         runs the remote connector: setup, start/stop, ngrok
+  oauth.py             connect-code sign-in for the remote connector
+  manifest.json        Claude Desktop extension manifest (.mcpb)
+  build_mcpb.py        packs the extension into dist/
   tests.py             self-contained test suite (run: python tests.py)
   charts/
     __init__.py        chart registry + catalog helpers
@@ -508,6 +575,8 @@ thinkcell-mcp/
     mekko.py
     area.py
     combo.py
+    table.py
+    process.py
   templates/           thinkcell_auto.pptx is copied here from your think-cell
                        install on first use (not shipped with the repo)
   output/              generated .ppttc / .pptx files (git-ignored)
@@ -516,6 +585,7 @@ thinkcell-mcp/
   .mcp.json.example    sample Claude MCP registration
   LICENSE              MIT licence
   README.md            this file
+  CONNECTOR.md         connector setup guide
 ```
 
 ## Notes and limitations
@@ -530,9 +600,12 @@ thinkcell-mcp/
   Exact rendering (totals on a waterfall, which series is a line in a combo,
   Mekko column widths) is governed by the chart you set up in the template.
 
-## License
+## Credits and license
 
-Released under the [MIT License](LICENSE).
+Built on [Hector Vargas's thinkcell-mcp](https://github.com/Hectirry/thinkcell-mcp),
+which wrote the original server, chart builders and auto-deck. This fork adds
+the Claude Desktop extension, the remote connector, Excel/CSV import, tables,
+process charts and slide insertion. Released under the [MIT License](LICENSE).
 
 This is an independent, unofficial integration. "think-cell" is a trademark
 of think-cell Sales GmbH & Co. KG; this project is not affiliated with or

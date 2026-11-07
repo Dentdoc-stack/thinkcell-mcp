@@ -130,6 +130,21 @@ class ChartBuilder(ABC):
     def build_table(self) -> Table:
         """Return the ``(categories, series)`` pair for thinkcell.add_chart."""
 
+    def build_raw_table(self) -> tuple[str, list[list[Any]]] | None:
+        """Override to bypass ``Thinkcell.add_chart`` with a hand-built table.
+
+        The ``thinkcell`` library's ``add_chart`` only ever emits ``number``/
+        ``string``/``date`` cells and one *uniform* fill per whole series --
+        it cannot produce ``percentage`` cells or a *per-cell* conditional
+        fill (a table's differently-coloured cells within one column, for
+        instance). Chart types that need that (``table``, ``process``)
+        override this to return a ready-made ``(chart_name, table)`` pair,
+        which :func:`write_ppttc_slides` writes directly instead of calling
+        :meth:`build_table`/``add_chart``. Returning ``None`` (the default)
+        means "use the normal ``build_table``/``add_chart`` path".
+        """
+        return None
+
     # -- shared helpers -------------------------------------------------
     def category_key(self) -> str:
         """Identify which row key holds the category/label for each row."""
@@ -239,10 +254,17 @@ def write_ppttc_slides(
         for builders, textfields in slides:
             document.add_template(template)
             for builder in builders:
-                categories, series = builder.build_table()
-                document.add_chart(
-                    template, builder.chart_name, categories, series
-                )
+                raw = builder.build_raw_table()
+                if raw is not None:
+                    name, table = raw
+                    document.charts[-1]["data"].append(
+                        {"name": str(name), "table": table}
+                    )
+                else:
+                    categories, series = builder.build_table()
+                    document.add_chart(
+                        template, builder.chart_name, categories, series
+                    )
             for field_name, text in textfields or []:
                 document.add_textfield(template, field_name, text)
     except (ValueError, TypeError) as exc:

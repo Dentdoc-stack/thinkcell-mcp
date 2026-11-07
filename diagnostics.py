@@ -12,7 +12,6 @@ pinpoints the problem. It uses the standard library only.
 """
 from __future__ import annotations
 
-import os
 import re
 import sys
 import zipfile
@@ -26,11 +25,11 @@ try:
 except ImportError:  # pragma: no cover - non-Windows
     winreg = None  # type: ignore[assignment]
 
-# Expected think-cell install location (matches converter.py). Override with
-# the THINKCELL_DIR environment variable for non-default installs.
-THINKCELL_DIR = Path(
-    os.environ.get("THINKCELL_DIR", r"C:\Program Files (x86)\think-cell")
-)
+# think-cell install location, found the same way as converter.py (the
+# THINKCELL_DIR environment variable, else the registry, else the default).
+from converter import find_thinkcell_dir
+
+THINKCELL_DIR = Path(find_thinkcell_dir())
 PPTTC_EXE = THINKCELL_DIR / "ppttc.exe"
 
 # PowerPoint add-in LoadBehavior values and what they mean.

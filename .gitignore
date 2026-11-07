@@ -7,6 +7,9 @@ output/*
 # Not redistributed with this project.
 templates/*.pptx
 !templates/.gitkeep
+# chart library cut from the install, and the user's own slide templates
+templates/library/
+templates/user/
 
 # --- Local / personal files (not part of the published project) ---
 template.pptx
@@ -33,3 +36,8 @@ Thumbs.db
 # autoresearch experiment log (local only)
 results.tsv
 eval.log
+
+# --- Remote connector secret (server.py --http) ---
+.connector_token
+*.local.bat
+dist/

@@ -47,6 +47,17 @@ BIG_FOUR: list[str] = [
     "#FFDB00",  # EY yellow
 ]
 
+# Khyber Pakhtunkhwa TA-team deck palette, matching "template TA team.pptx"'s
+# theme (deep teal / teal / mint / gold / amber / deep red).
+KP_TA_TEAM: list[str] = [
+    "#004B53",  # deep teal
+    "#00717D",  # teal
+    "#8BD8BA",  # mint
+    "#FFDF9F",  # gold
+    "#E29700",  # amber
+    "#8C0A23",  # deep red
+]
+
 # Semantic colours (Vizro). These carry meaning and must stay fixed regardless
 # of the chosen accent palette: green=good, red=bad, gray=baseline.
 SEMANTIC: dict[str, str] = {
@@ -63,6 +74,7 @@ PALETTES: dict[str, list[str]] = {
     "vizro": VIZRO_QUALITATIVE[:6],
     "vizro_full": VIZRO_QUALITATIVE,
     "big_four": BIG_FOUR,
+    "kp_ta_team": KP_TA_TEAM,
 }
 
 _HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")

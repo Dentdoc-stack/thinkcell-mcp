@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "thinkcell-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server that wraps think-cell's .ppttc JSON automation to build PowerPoint charts and decks from plain data."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Hector Vargas" }]
+authors = [{ name = "Hector Vargas" }, { name = "Dentdoc-stack" }]
 keywords = ["mcp", "think-cell", "powerpoint", "pptx", "charts", "automation"]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -18,16 +18,21 @@ classifiers = [
     "Topic :: Office/Business",
 ]
 dependencies = [
-    "mcp[cli]>=1.27.1",
+    "mcp[cli]>=1.27.1,<2.0.0",
     "thinkcell>=21.10.12",
+    "openpyxl>=3.1.0",
+    "python-pptx>=1.0.0",
+    "olefile>=0.46",
+    "pywin32>=306; sys_platform == 'win32'",
 ]
 
 [project.urls]
-Homepage = "https://github.com/Hectirry/thinkcell-mcp"
-Issues = "https://github.com/Hectirry/thinkcell-mcp/issues"
+Homepage = "https://github.com/Dentdoc-stack/thinkcell-mcp"
+Issues = "https://github.com/Dentdoc-stack/thinkcell-mcp/issues"
 
 [tool.setuptools]
-py-modules = ["server", "autodeck", "converter", "validator", "diagnostics"]
+py-modules = ["server", "autodeck", "branding", "connector", "converter", "data_import", "diagnostics",
+              "layout", "library", "modern_http", "oauth", "palettes", "validator"]
 
 [tool.setuptools.packages.find]
 include = ["charts*"]

@@ -33,8 +33,10 @@ from charts.bar import BarChart
 from charts.combo import ComboChart
 from charts.line import LineChart
 from charts.mekko import MekkoChart
+from charts.process import ProcessChart
 from charts.scatter import ScatterChart
 from charts.stacked_bar import StackedBarChart
+from charts.table import TableChart
 from charts.waterfall import WaterfallChart
 from validator import validate_ppttc_data
 
@@ -61,7 +63,7 @@ def has(errors: list[str], needle: str) -> bool:
 # chart registry / catalog
 # --------------------------------------------------------------------------
 def test_registry() -> None:
-    check("8 chart types registered", len(CHART_BUILDERS) == 8)
+    check("10 chart types registered", len(CHART_BUILDERS) == 10)
     check("get_builder('bar') resolves", get_builder("bar") is BarChart)
     check("get_builder unknown -> None", get_builder("pie") is None)
 
@@ -249,6 +251,144 @@ def test_combo() -> None:
 
 
 # --------------------------------------------------------------------------
+# table (raw .ppttc bypass: per-cell conditional fill)
+# --------------------------------------------------------------------------
+def test_table() -> None:
+    rows = [
+        {"Department": "Agriculture", "Proposed": 2217, "Difference": -453},
+        {"Department": "Health", "Proposed": 2768, "Difference": 3553},
+    ]
+    good = TableChart(data=rows, title="T")
+    check("table: valid rows have no errors", good.validate() == [])
+    name, table = good.build_raw_table()
+    check("table: header row is column names", table[0] == [
+        {"string": "Department"}, {"string": "Proposed"}, {"string": "Difference"},
+    ])
+    check("table: negative Difference cell not auto-filled without a rule",
+          "fill" not in table[1][2])
+
+    highlighted = TableChart(
+        data=rows, title="T",
+        columns=["Department", "Proposed", "Difference"],
+        highlight=[{"column": "Difference", "rule": "negative"}],
+    )
+    check("table: highlight option accepted", highlighted.validate() == [])
+    _, table2 = highlighted.build_raw_table()
+    check("table: negative cell gets a fill", "fill" in table2[1][2])
+    check("table: positive cell has no fill", "fill" not in table2[2][2])
+
+    check(
+        "table: unknown column in row rejected",
+        has(
+            TableChart(data=[{"X": 1}], title="T", columns=["Y"]).validate(),
+            "not in columns",
+        ),
+    )
+    check(
+        "table: bad highlight rule rejected",
+        has(
+            TableChart(
+                data=rows, title="T",
+                highlight=[{"column": "Difference", "rule": "nope"}],
+            ).validate(),
+            "must be one of",
+        ),
+    )
+    check(
+        "table: gt/lt/eq rule without fill rejected",
+        has(
+            TableChart(
+                data=rows, title="T",
+                highlight=[{"column": "Proposed", "rule": "gt", "value": 1000}],
+            ).validate(),
+            "fill is required",
+        ),
+    )
+    check(
+        "table: no columns at all rejected",
+        has(TableChart(data=[{}], title="T").validate(), "at least one column"),
+    )
+
+    pct = TableChart(
+        data=[{"Region": "N", "Share": 48}], title="T",
+        percentage_columns=["Share"],
+    )
+    check("table: percentage_columns accepted", pct.validate() == [])
+    _, pct_table = pct.build_raw_table()
+    check("table: percentage column uses 'percentage' key",
+          "percentage" in pct_table[1][1])
+
+
+# --------------------------------------------------------------------------
+# process (raw .ppttc bypass: dated milestone timeline)
+# --------------------------------------------------------------------------
+def test_process() -> None:
+    milestones = [
+        {"date": "2025-05-27", "label": "Roadmap Launched", "detail": "by CM"},
+        {"date": "2026-01-19", "label": "Launch of v2.0"},
+    ]
+    good = ProcessChart(data=milestones, title="T")
+    check("process: valid milestones have no errors", good.validate() == [])
+    name, table = good.build_raw_table()
+    check("process: header has one cell per milestone", len(table[0]) == 2)
+    check("process: header cells are date-typed",
+          all("date" in cell for cell in table[0]))
+    check("process: milestone row starts with 'Milestone' label",
+          table[1][0] == {"string": "Milestone"})
+    check("process: detail row present when any milestone has detail",
+          len(table) == 3 and table[2][0] == {"string": "Detail"})
+
+    check(
+        "process: single milestone rejected",
+        has(ProcessChart(data=milestones[:1], title="T").validate(), "at least 2"),
+    )
+    check(
+        "process: bad date format rejected",
+        has(
+            ProcessChart(
+                data=[{"date": "27-05-2025", "label": "X"},
+                      {"date": "2026-01-01", "label": "Y"}],
+                title="T",
+            ).validate(),
+            "ISO date",
+        ),
+    )
+    check(
+        "process: missing label rejected",
+        has(
+            ProcessChart(
+                data=[{"date": "2025-01-01"}, {"date": "2026-01-01", "label": "Y"}],
+                title="T",
+            ).validate(),
+            "non-empty string",
+        ),
+    )
+
+    current = ProcessChart(data=milestones, title="T", current_date="2025-09-01")
+    check("process: current_date between milestones accepted", current.validate() == [])
+    _, current_table = current.build_raw_table()
+    check("process: current_date inserted chronologically (3 columns)",
+          len(current_table[0]) == 3)
+    marked_index = next(
+        i for i, cell in enumerate(current_table[0])
+        if cell.get("date") == "2025-09-01"
+    )
+    check("process: current_date cell gets a fill", "fill" in current_table[0][marked_index])
+    check("process: current_date has no label (None cell)",
+          current_table[1][marked_index + 1] is None)
+
+    check(
+        "process: bad current_date rejected",
+        has(
+            ProcessChart(
+                data=milestones, title="T", current_date="not-a-date"
+            ).validate(),
+            "current_date",
+        ),
+    )
+
+
+# --------------------------------------------------------------------------
 # known_option_keys (typo guard)
 # --------------------------------------------------------------------------
 def test_known_option_keys() -> None:
@@ -387,6 +527,12 @@ def test_validator() -> None:
 # validator: percentage cell support (bug fix)
 # --------------------------------------------------------------------------
 def test_validator_percentage() -> None:
+    # think-cell manual, Cell data types: dates must be "YYYY-MM-DD".
+    def date_doc(value):
+        return [{"template": "d.pptx", "data": [{"name": "C", "table": [[None, {"date": value}]]}]}]
+    check("validator: ISO date accepted", validate_ppttc_data(date_doc("2024-01-31"))["valid"])
+    for bad in ("01/02/2024", "2024-1-5", "2024-02-30", "2024-01-31T00:00"):
+        check(f"validator: non-ISO date {bad!r} rejected", not validate_ppttc_data(date_doc(bad))["valid"])
     # A 'percentage' cell is part of the official think-cell schema.
     valid = [{"template": "d.pptx", "data": [
         {"name": "C", "table": [[{"percentage": 46.5}]]}]}]
@@ -632,6 +778,151 @@ def test_autodeck() -> None:
 
 
 # --------------------------------------------------------------------------
+# layout: single-chart auto-widen variants of the auto-deck template
+# --------------------------------------------------------------------------
+def test_layout() -> None:
+    import zipfile
+
+    from layout import _find_chart_frames, _slide_keep, widen_single_chart, \
+        widen_single_charts_in_pptx
+
+    if not ensure_auto_template():
+        print("  SKIP: layout checks (think-cell template unavailable)")
+        return
+
+    with zipfile.ZipFile(AUTO_TEMPLATE_PATH) as zin:
+        original_xml = zin.read("ppt/slides/slide1.xml").decode("utf-8")
+
+    frames = _find_chart_frames(original_xml)
+    check("layout: base template has exactly 2 real chart frames", len(frames) == 2)
+    union_width = (frames[1]["x"] + frames[1]["cx"]) - frames[0]["x"]
+
+    widened_left = widen_single_chart(original_xml, "left")
+    check("layout: widening left changes the XML", widened_left != original_xml)
+    kept, dropped = sorted(
+        _find_chart_frames(widened_left), key=lambda f: f["cx"], reverse=True
+    )
+    check("layout: kept (left) chart spans the union width", kept["cx"] == union_width)
+    check("layout: dropped (right) chart moved off-slide", dropped["x"] >= 12192000)
+
+    widened_right = widen_single_chart(original_xml, "right")
+    kept_r, dropped_r = sorted(
+        _find_chart_frames(widened_right), key=lambda f: f["cx"], reverse=True
+    )
+    check("layout: kept (right) chart spans the union width", kept_r["cx"] == union_width)
+    check("layout: dropped (left) chart moved off-slide", dropped_r["x"] >= 12192000)
+
+    check(
+        "layout: widen_single_chart is a no-op on unexpected shapes",
+        widen_single_chart("<p:sld></p:sld>", "left") == "<p:sld></p:sld>",
+    )
+
+    # _slide_keep: derives which chart to widen straight from a .ppttc entry.
+    check(
+        "layout: _slide_keep picks 'left' when only LeftChart is present",
+        _slide_keep({"data": [{"name": "LeftChart", "table": []}]}) == "left",
+    )
+    check(
+        "layout: _slide_keep picks 'right' when only RightChart is present",
+        _slide_keep({"data": [{"name": "RightChart", "table": []}]}) == "right",
+    )
+    check(
+        "layout: _slide_keep is None when both charts are present",
+        _slide_keep({"data": [
+            {"name": "LeftChart", "table": []}, {"name": "RightChart", "table": []},
+        ]}) is None,
+    )
+    check(
+        "layout: _slide_keep is None for a non-auto-deck slide",
+        _slide_keep({"data": [{"name": "Chart1", "table": []}]}) is None,
+    )
+
+    # End-to-end through the real pipeline: convert a mixed 2-slide deck
+    # (dual-chart, then single-chart) and confirm both (a) the pushed data
+    # is intact and (b) the single-chart slide is actually widened. This is
+    # the regression test for the bug this module works around: widening
+    # the *template* before conversion silently breaks the data push.
+    deck = build_auto_deck(
+        [
+            _sample_slide(),
+            {
+                "slide_title": "Solo",
+                "left_title": "Solo chart",
+                "left_chart": {
+                    "categories": ["2024-01-01", "2025-01-01"],
+                    "series": [{"name": "UniqueMarker", "values": [777, 888]}],
+                },
+            },
+        ],
+        "_test_layout_pipeline",
+    )
+    check("layout: mixed-deck build succeeds", deck["success"])
+
+    from converter import convert_ppttc
+
+    conv = convert_ppttc(deck["ppttc_path"])
+    check("layout: mixed-deck conversion succeeds", conv["success"])
+    if conv["success"]:
+        document = json.loads(open(deck["ppttc_path"], encoding="utf-8").read())
+        widened = widen_single_charts_in_pptx(conv["pptx_path"], document)
+        check("layout: exactly the one single-chart slide was widened", widened == 1)
+
+        from pptx import Presentation
+
+        prs = Presentation(conv["pptx_path"])
+        slide2_charts = {
+            shape.name: shape
+            for shape in prs.slides[1].shapes
+            if getattr(shape, "has_chart", False)
+        }
+        widened_shape = max(slide2_charts.values(), key=lambda s: s.width)
+        narrowed_shape = min(slide2_charts.values(), key=lambda s: s.width)
+        check(
+            "layout: widened slide2 chart carries the real pushed data "
+            "(not stale template placeholder values)",
+            [round(v) for v in widened_shape.chart.series[0].values] == [777, 888],
+        )
+        check(
+            "layout: widened shape is wider than the unwidened one",
+            widened_shape.width > narrowed_shape.width,
+        )
+        check(
+            "layout: dropped shape moved off the visible slide",
+            narrowed_shape.left >= 12192000,
+        )
+
+        slide1_charts = [
+            shape for shape in prs.slides[0].shapes
+            if getattr(shape, "has_chart", False)
+        ]
+        check(
+            "layout: dual-chart slide1 left untouched (still 2 on-slide charts)",
+            len(slide1_charts) == 2
+            and all(shape.left < 12192000 for shape in slide1_charts),
+        )
+
+    # widen_single_chart=False on convert_to_pptx: no widening applied.
+    import server
+
+    off = server.create_auto_deck(
+        [{
+            "slide_title": "Solo2",
+            "left_chart": {
+                "categories": ["2024-01-01", "2025-01-01"],
+                "series": [{"name": "S", "values": [1, 2]}],
+            },
+        }],
+        "_test_layout_opt_out",
+    )
+    conv_off = server.convert_to_pptx(off["ppttc_path"], widen_single_chart=False)
+    check("layout: convert_to_pptx succeeds with widening disabled", conv_off["success"])
+    check(
+        "layout: widened_slides is 0 when widen_single_chart=False",
+        conv_off.get("widened_slides") == 0,
+    )
+
+
+# --------------------------------------------------------------------------
 # branding: re-theme the auto-deck template
 # --------------------------------------------------------------------------
 def test_branding() -> None:
@@ -719,6 +1010,15 @@ def test_palettes() -> None:
     # vizro maps to PowerPoint's six accent slots; full keeps all ten.
     check("palettes: 'vizro' fits 6 accent slots", len(get_palette("vizro")) == 6)
     check("palettes: 'vizro_full' has 10 colours", len(get_palette("vizro_full")) == 10)
+    check("palettes: 'kp_ta_team' fits 6 accent slots", len(get_palette("kp_ta_team")) == 6)
+    check(
+        "palettes: 'kp_ta_team' starts with the deep teal accent",
+        get_palette("kp_ta_team")[0] == "#004B53",
+    )
+    check(
+        "palettes: 'kp_ta_team' listed in list_palettes()",
+        "kp_ta_team" in list_palettes()["palettes"],
+    )
     check("palettes: get_palette is case-insensitive", get_palette("VIZRO") == get_palette("vizro"))
     check(
         "palettes: get_palette returns a copy",
@@ -818,11 +1118,24 @@ def test_server_smoke() -> None:
 
     tools = [
         "create_chart", "build_presentation", "create_auto_deck",
-        "set_deck_branding", "list_color_palettes", "convert_to_pptx",
-        "validate_ppttc", "list_chart_types", "diagnose_thinkcell",
+        "set_deck_branding", "list_color_palettes", "import_chart_data",
+        "convert_to_pptx", "validate_ppttc", "list_chart_types",
+        "diagnose_thinkcell", "insert_into_powerpoint",
+        "list_chart_templates", "template_from_slide", "fill_chart_template",
     ]
     for name in tools:
         check(f"server: tool '{name}' is defined", hasattr(server, name))
+
+    # Remote (--http) mode keeps path arguments inside the allowed folders.
+    server.REMOTE = True
+    try:
+        outside = server.import_chart_data(str(server.PROJECT_ROOT.parent / "secret.xlsx"))
+        check("remote: path outside the allowed folders is refused",
+              outside["success"] is False and "outside the folders" in outside["errors"][0])
+        inside = server.validate_ppttc(str(server.OUTPUT_DIR / "_missing.ppttc"))
+        check("remote: path inside output/ is let through", "File not found" in inside["errors"][0])
+    finally:
+        server.REMOTE = False
 
 
 # --------------------------------------------------------------------------
@@ -892,6 +1205,450 @@ def test_build_presentation() -> None:
     )
 
 
+# --------------------------------------------------------------------------
+# table/process through the real server pipeline (write_ppttc_slides bypass)
+# --------------------------------------------------------------------------
+def test_raw_table_pipeline() -> None:
+    import server
+
+    result = server.create_chart(
+        chart_type="table",
+        data=[{"Dept": "A", "Diff": -5}, {"Dept": "B", "Diff": 5}],
+        title="_test_table_pipeline",
+        options={"highlight": [{"column": "Diff", "rule": "negative"}]},
+        chart_name="TestTable",
+    )
+    check("create_chart(table): succeeds", result["success"])
+    document = json.loads(open(result["ppttc_path"], encoding="utf-8").read())
+    elements = {e["name"]: e for e in document[0]["data"]}
+    check("create_chart(table): element name matches chart_name",
+          "TestTable" in elements)
+    check("create_chart(table): negative cell carries a fill",
+          "fill" in elements["TestTable"]["table"][1][1])
+
+    # Mixed slide: a normal (add_chart-backed) chart plus a raw-table chart.
+    mixed = server.build_presentation(
+        slides=[{
+            "title": "Mixed",
+            "charts": [
+                {"chart_type": "bar", "chart_name": "Bars",
+                 "data": [{"category": "A", "V": 1}, {"category": "B", "V": 2}]},
+                {"chart_type": "table", "chart_name": "Grid",
+                 "data": [{"X": "a", "Y": 1}]},
+            ],
+        }],
+        template_path="deck.pptx",
+        output_name="_test_mixed_table",
+    )
+    check("build_presentation: mixed bar+table slide succeeds", mixed["success"])
+    mixed_doc = json.loads(open(mixed["ppttc_path"], encoding="utf-8").read())
+    names = {e["name"] for e in mixed_doc[0]["data"]}
+    check("build_presentation: both bar and table elements present",
+          {"Bars", "Grid"} <= names)
+
+    process_result = server.create_chart(
+        chart_type="process",
+        data=[{"date": "2025-01-01", "label": "Start"},
+              {"date": "2026-01-01", "label": "End"}],
+        title="_test_process_pipeline",
+        chart_name="TestTimeline",
+    )
+    check("create_chart(process): succeeds", process_result["success"])
+
+
+# --------------------------------------------------------------------------
+# data_import: read chart/table data from .csv / .xlsx
+# --------------------------------------------------------------------------
+def test_import_chart_data() -> None:
+    import tempfile
+    from datetime import date as dt_date
+    from pathlib import Path as _Path
+
+    from data_import import import_spreadsheet
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        tmp_path = _Path(tmp)
+
+        # -- CSV -------------------------------------------------------
+        csv_path = tmp_path / "sample.csv"
+        csv_path.write_text(
+            "Department,Proposed,Difference\n"
+            "Agriculture,2217,-453\n"
+            "Health,2768,3553\n"
+            "\n"  # blank line -- should be skipped
+            "Trailing, ,\n",
+            encoding="utf-8",
+        )
+        result = import_spreadsheet(str(csv_path))
+        check("import: csv succeeds", result["success"])
+        check("import: csv columns detected", result["columns"] == [
+            "Department", "Proposed", "Difference"
+        ])
+        check("import: csv row_count is 3", result["row_count"] == 3)
+        check(
+            "import: csv numeric cells coerced to numbers",
+            result["data"][0] == {
+                "Department": "Agriculture", "Proposed": 2217, "Difference": -453
+            },
+        )
+        check(
+            "import: csv blank cells dropped rather than kept as ''",
+            "Proposed" not in result["data"][2]
+            and "Difference" not in result["data"][2],
+        )
+
+        # Data feeds straight into a categorical chart builder.
+        check(
+            "import: csv data validates as a bar chart",
+            BarChart(data=result["data"][:2], title="T").validate() == [],
+        )
+        # ... and straight into the table chart builder.
+        check(
+            "import: csv data validates as a table chart",
+            TableChart(data=result["data"][:2], title="T").validate() == [],
+        )
+
+        check(
+            "import: missing file reported",
+            not import_spreadsheet(str(tmp_path / "nope.csv"))["success"],
+        )
+
+        txt_path = tmp_path / "sample.txt"
+        txt_path.write_text("x", encoding="utf-8")
+        check(
+            "import: unsupported extension reported",
+            has(import_spreadsheet(str(txt_path))["errors"], "Unsupported file type"),
+        )
+
+        dup_path = tmp_path / "dup.csv"
+        dup_path.write_text("A,A\n1,2\n", encoding="utf-8")
+        check(
+            "import: duplicate column headers rejected",
+            has(import_spreadsheet(str(dup_path))["errors"], "Duplicate"),
+        )
+
+        empty_path = tmp_path / "empty.csv"
+        empty_path.write_text("", encoding="utf-8")
+        check(
+            "import: empty file reported",
+            not import_spreadsheet(str(empty_path))["success"],
+        )
+
+        header_only = tmp_path / "header_only.csv"
+        header_only.write_text("A,B\n", encoding="utf-8")
+        header_only_result = import_spreadsheet(str(header_only))
+        check(
+            "import: header-only csv reports no data rows",
+            not header_only_result["success"]
+            and has(header_only_result["errors"], "No data rows"),
+        )
+
+        # -- XLSX --------------------------------------------------------
+        try:
+            import openpyxl
+        except ImportError:
+            print("  SKIP: xlsx import checks (openpyxl unavailable)")
+            return
+
+        xlsx_path = tmp_path / "sample.xlsx"
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "Budget"
+        sheet.append(["Region", "Share", "Date"])
+        sheet.append(["North", 0.219, dt_date(2025, 1, 1)])
+        sheet.cell(row=2, column=2).number_format = "0.0%"
+        sheet.append(["South", 0.5, None])
+        workbook.save(xlsx_path)
+
+        xlsx_result = import_spreadsheet(str(xlsx_path), sheet_name="Budget")
+        check("import: xlsx succeeds", xlsx_result["success"])
+        check(
+            "import: xlsx percentage column detected and rescaled to whole points",
+            "Share" in xlsx_result["percentage_columns"]
+            and abs(xlsx_result["data"][0]["Share"] - 21.9) < 0.01,
+        )
+        check(
+            "import: xlsx date cell converted to ISO string",
+            xlsx_result["data"][0]["Date"] == "2025-01-01",
+        )
+        check(
+            "import: xlsx blank cell dropped from its row",
+            "Date" not in xlsx_result["data"][1],
+        )
+        check(
+            "import: unknown sheet name reported",
+            has(
+                import_spreadsheet(str(xlsx_path), sheet_name="Nope")["errors"],
+                "not found",
+            ),
+        )
+
+
+def test_connector_auth() -> None:
+    """Connect-code sign-in: wrong codes refused and limited, tokens hashed and rotated."""
+    import asyncio
+    import tempfile
+    from pathlib import Path
+
+    import oauth
+    from mcp.server.auth.provider import AuthorizationParams
+    from mcp.shared.auth import OAuthClientInformationFull
+
+    code = oauth.new_connect_code()
+    check("connect code looks like XXXX-XXXX", re.fullmatch(r"[A-Z2-9]{4}-[A-Z2-9]{4}", code) is not None)
+    check("connect code skips 0/O/1/I/L", not set(code) & set("01OIL"))
+
+    async def flow(state: Path) -> None:
+        auth = oauth.ConnectorAuth(state, "https://pc.example/", "k7mp q2xd")
+        client = OAuthClientInformationFull(client_id="c1", client_name="Claude",
+                                            redirect_uris=["https://claude.ai/cb"])
+        await auth.register_client(client)
+        params = AuthorizationParams(state="s", scopes=[], code_challenge="x" * 43,
+                                     redirect_uri="https://claude.ai/cb",
+                                     redirect_uri_provided_explicitly=True)
+        url = await auth.authorize(client, params)
+        check("authorize sends the user to /connect", url.startswith("https://pc.example/connect?request="))
+        req = url.split("request=")[1]
+        check("connect page knows the client name", auth.client_name(req) == "Claude")
+        redirect, err = auth.approve(req, "WRONG-CODE")
+        check("wrong code refused", redirect is None and "not right" in err)
+        redirect, err = auth.approve(req, "K7MP-Q2XD")
+        check("right code (any spacing/case) approves", err is None and "code=" in redirect and "state=s" in redirect)
+        check("a sign-in cannot be reused", auth.approve(req, "K7MP-Q2XD")[0] is None)
+        auth_code = await auth.load_authorization_code(client, redirect.split("code=")[1].split("&")[0])
+        check("authorization code loads", auth_code is not None)
+        token = await auth.exchange_authorization_code(client, auth_code)
+        check("access token works", await auth.load_access_token(token.access_token) is not None)
+        check("state file holds no raw token", token.access_token not in state.read_text())
+        again = oauth.ConnectorAuth(state, "https://pc.example", "K7MP-Q2XD")
+        check("token survives a restart", await again.load_access_token(token.access_token) is not None)
+        rt = await again.load_refresh_token(client, token.refresh_token)
+        new = await again.exchange_refresh_token(client, rt, [])
+        check("refresh issues a new token", await again.load_access_token(new.access_token) is not None)
+        check("old refresh token refused after use",
+              await again.load_refresh_token(client, token.refresh_token) is None)
+        await again.revoke_token(await again.load_access_token(new.access_token))
+        check("revoked token refused", await again.load_access_token(new.access_token) is None)
+        # Overall limit on wrong codes, across sign-ins.
+        for _ in range(oauth.FAILURES_PER_WINDOW):
+            r = (await auth.authorize(client, params)).split("request=")[1]
+            auth.approve(r, "nope")
+        r = (await auth.authorize(client, params)).split("request=")[1]
+        check("too many wrong codes locks sign-in", "Too many" in auth.approve(r, "K7MP-Q2XD")[1])
+        keyed = oauth.ConnectorAuth(state, "https://pc.example", "K7MP-Q2XD", api_key="k-123")
+        check("API key is accepted as a bearer token", await keyed.load_access_token("k-123") is not None)
+        check("wrong API key refused", await keyed.load_access_token("k-124") is None)
+        check("no API key configured -> none accepted", await auth.load_access_token("k-123") is None)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        asyncio.run(flow(Path(tmp) / "oauth_state.json"))
+
+
+def test_connector_app() -> None:
+    """The remote app: OAuth metadata, 401 without a token, /connect page, no Content-Length."""
+    import asyncio
+    import os
+    import tempfile
+
+    import httpx
+
+    import server
+
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["THINKCELL_CONNECTOR_HOME"] = tmp
+        import connector
+
+        connector.CONFIG_DIR = connector.Path(tmp)
+        connector.CONFIG_FILE = connector.CONFIG_DIR / "config.json"
+        connector.STATE_FILE = connector.CONFIG_DIR / "oauth_state.json"
+        connector.save_config({"public_url": "https://pc.example", "connect_code": "K7MP-Q2XD",
+                               "api_key": "assist-key-123", "folders": [tmp]})
+        saved = (server.REMOTE, list(server.REMOTE_ROOTS))
+        try:
+            app = server.connector_app()
+            check("remote mode turns on path limits", server.REMOTE and connector.Path(tmp) in
+                  [connector.Path(p) for p in server.REMOTE_ROOTS])
+
+            async def calls() -> None:
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                             base_url="https://pc.example") as c:
+                    meta = await c.get("/.well-known/oauth-authorization-server")
+                    check("authorization server metadata", meta.status_code == 200
+                          and meta.json()["issuer"].rstrip("/") == "https://pc.example")
+                    check("replies carry no Content-Length (antivirus fix)",
+                          "content-length" not in meta.headers)
+                    res = await c.post("/mcp", json={})
+                    check("/mcp without a token is 401", res.status_code == 401
+                          and "resource_metadata" in res.headers.get("www-authenticate", ""))
+                    page = await c.get("/connect?request=missing")
+                    check("unknown sign-in request refused", page.status_code == 400)
+                    check("connect page cannot be framed", page.headers.get("x-frame-options") == "DENY")
+
+                    # think-cell Assist: browser CORS + API-key header (its manual's CORS table).
+                    assist = server.ASSIST_ORIGIN
+                    pre = await c.options("/mcp", headers={
+                        "Origin": assist, "Access-Control-Request-Method": "POST",
+                        "Access-Control-Request-Headers": "content-type,authorization"})
+                    allow = pre.headers.get("access-control-allow-headers", "")
+                    check("Assist preflight answered before sign-in", pre.status_code == 204)
+                    check("preflight allows the Assist origin",
+                          pre.headers.get("access-control-allow-origin") == assist)
+                    check("preflight allows Assist's required headers", all(
+                        h in allow for h in ("content-type", "authorization",
+                                             "mcp-protocol-version", "mcp-session-id")))
+                    mcp_headers = {"Origin": assist, "Accept": "application/json, text/event-stream",
+                                   "MCP-Protocol-Version": "2025-11-25"}
+                    init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                        "protocolVersion": "2025-11-25", "capabilities": {},
+                        "clientInfo": {"name": "assist-test", "version": "1"}}}
+                    # The MCP endpoint needs the SDK's session manager running.
+                    async with server.mcp.session_manager.run():
+                        ok = await c.post("/mcp", json=init, headers={
+                            **mcp_headers, "Authorization": "Bearer assist-key-123"})
+                    check("Assist API key signs in", ok.status_code == 200 and "protocolVersion" in ok.text)
+                    check("reply carries Access-Control-Allow-Origin",
+                          ok.headers.get("access-control-allow-origin") == assist)
+                    check("session id header exposed to the browser",
+                          "mcp-session-id" in ok.headers.get("access-control-expose-headers", ""))
+                    bad = await c.post("/mcp", json=init, headers={**mcp_headers, "Authorization": "Bearer nope"})
+                    check("wrong API key -> 401, readable by the browser", bad.status_code == 401
+                          and bad.headers.get("access-control-allow-origin") == assist)
+                    evil = await c.post("/mcp", json=init, headers={**mcp_headers, "Origin": "https://evil.example",
+                                                                    "Authorization": "Bearer assist-key-123"})
+                    check("other Origin -> 403 even with the key", evil.status_code == 403
+                          and "access-control-allow-origin" not in evil.headers)
+                    get = await c.get("/mcp", headers={"Origin": assist})
+                    check("GET /mcp -> 405 (stateless: no stream to open)", get.status_code == 405)
+                    own = await c.post("/connect", data={"request": "missing", "code": "x"},
+                                       headers={"Origin": "https://pc.example"})
+                    check("connect form posts from the server's own origin", own.status_code == 400)
+
+                    # MCP 2026-07-28: stateless, version in _meta + headers, no initialize.
+                    async def modern(method, params=None, id_=7, **extra):
+                        body = {"jsonrpc": "2.0", "method": method, "params": {
+                            **(params or {}), "_meta": {"io.modelcontextprotocol/protocolVersion":
+                                                        extra.pop("meta_version", "2026-07-28")}}}
+                        if id_ is not None:
+                            body["id"] = id_
+                        headers = {"Origin": assist, "Authorization": "Bearer assist-key-123",
+                                   "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": method, **extra}
+                        return await c.post("/mcp", json=body, headers={k: v for k, v in headers.items() if v})
+                    disc = await modern("server/discover")
+                    result = disc.json().get("result", {})
+                    check("2026-07-28 server/discover answered", disc.status_code == 200
+                          and "2026-07-28" in result.get("supportedVersions", [])
+                          and "2025-11-25" in result["supportedVersions"]
+                          and result.get("resultType") == "complete" and "tools" in result.get("capabilities", {}))
+                    check("discover names the server",
+                          result.get("_meta", {}).get("io.modelcontextprotocol/serverInfo", {}).get("name") == "thinkcell")
+                    check("modern reply keeps CORS", disc.headers.get("access-control-allow-origin") == assist)
+                    listed = (await modern("tools/list")).json().get("result", {})
+                    names = [t["name"] for t in listed.get("tools", [])]
+                    check("2026-07-28 tools/list lists every tool, sorted",
+                          len(names) == len(await server.mcp.list_tools()) and names == sorted(names)
+                          and listed.get("cacheScope") and listed.get("ttlMs"))
+                    called = await modern("tools/call", {"name": "list_chart_types", "arguments": {}},
+                                          **{"Mcp-Name": "list_chart_types"})
+                    out = called.json().get("result", {})
+                    check("2026-07-28 tools/call runs the tool", called.status_code == 200
+                          and out.get("resultType") == "complete" and not out.get("isError") and out.get("content"))
+                    b64 = await modern("tools/call", {"name": "list_chart_types", "arguments": {}},
+                                       **{"Mcp-Name": "=?base64?bGlzdF9jaGFydF90eXBlcw==?="})
+                    check("base64 Mcp-Name accepted", b64.status_code == 200)
+                    wrong_name = await modern("tools/call", {"name": "list_chart_types"}, **{"Mcp-Name": "other"})
+                    check("Mcp-Name mismatch -> 400 / -32020", wrong_name.status_code == 400
+                          and wrong_name.json()["error"]["code"] == -32020)
+                    no_header = await modern("tools/list", **{"MCP-Protocol-Version": ""})
+                    check("missing MCP-Protocol-Version -> 400 / -32020", no_header.status_code == 400
+                          and no_header.json()["error"]["code"] == -32020)
+                    future = await modern("tools/list", meta_version="2099-01-01", **{"MCP-Protocol-Version": "2099-01-01"})
+                    err = future.json().get("error", {})
+                    check("unknown version -> 400 / -32022 with supported list", future.status_code == 400
+                          and err.get("code") == -32022 and "2026-07-28" in err.get("data", {}).get("supported", []))
+                    unknown = await modern("prompts/list")
+                    check("unsupported method -> 404 / -32601", unknown.status_code == 404
+                          and unknown.json()["error"]["code"] == -32601)
+                    note = await modern("notifications/cancelled", id_=None)
+                    check("modern notification -> 202", note.status_code == 202)
+                    anon = await modern("server/discover", Authorization="")
+                    check("modern request without a token -> 401", anon.status_code == 401
+                          and "resource_metadata" in anon.headers.get("www-authenticate", ""))
+
+            asyncio.run(calls())
+        finally:
+            server.REMOTE, server.REMOTE_ROOTS[:] = saved[0], saved[1]
+            os.environ.pop("THINKCELL_CONNECTOR_HOME", None)
+
+
+def test_chart_library() -> None:
+    """Template library: datasheet tables always; cutting, naming and filling when think-cell is installed."""
+    import library
+    import server
+
+    table = library.chart_table({"categories": ["2025", "2026-01-01"], "series": [
+        {"name": "A", "values": [1, 2]}, {"values": [3, None], "fill": "#ff0000"}]})
+    check("library: header row has a blank corner and the categories", table[0] == [
+        None, {"string": "2025"}, {"date": "2026-01-01"}])
+    check("library: series rows carry label and numbers", table[1] == [{"string": "A"}, {"number": 1}, {"number": 2}])
+    check("library: unnamed series and fill colour", table[2] == [None, {"number": 3, "fill": "#ff0000"}, None])
+    pct = library.chart_table({"categories": ["x"], "series": [{"name": "s", "values": [45]}], "percent": True})
+    check("library: percent writes percentage cells", pct[1][1] == {"percentage": 45})
+    total = library.chart_table({"categories": ["a", "b"], "total": 100, "series": [{"name": "s", "values": [1, 2]}]})
+    check("library: total adds the 100%= row second", total[1] == [None, {"number": 100}, {"number": 100}])
+    check("library: waterfall 'e' stays a text cell",
+          library.chart_table({"categories": ["a"], "series": [{"values": ["e"]}]})[1][1] == {"string": "e"})
+    for label, bad in (("value count", {"categories": ["a", "b"], "series": [{"values": [1]}]}),
+                       ("no categories", {"categories": [], "series": [{"values": []}]}),
+                       ("total count", {"categories": ["a", "b"], "total": [1], "series": [{"values": [1, 2]}]})):
+        try:
+            library.chart_table(bad)
+            check(f"library: rejects wrong {label}", False)
+        except ValueError:
+            check(f"library: rejects wrong {label}", True)
+    check("library: raw table passes through", library.chart_table({"table": [[None]]}) == [[None]])
+    unknown = server.fill_chart_template("no-such-template", {"c1": {}})
+    check("library: unknown template id refused", not unknown["success"] and "list_chart_templates" in unknown["errors"][0])
+
+    # Cutting and naming need think-cell's installed library (absent in CI) and pywin32.
+    try:
+        import pythoncom  # noqa: F401
+    except ImportError:
+        return
+    if not library.INSTALL_LIBRARY.is_dir():
+        return
+    index = library.ensure_library()
+    ids = {e["id"] for e in index}
+    check("library: think-cell's chart library becomes 30+ templates", len(index) >= 30)
+    check("library: Gantt charts are left out (ppttc garbles them)", not any("gantt" in i for i in ids))
+    bar = next(e for e in index if e["id"] == "bar-column-1")
+    check("library: bar template reads its categories and series",
+          bar["charts"][0]["categories"][:2] == ["2016", "2017"] and bar["charts"][0]["series"] == 3)
+    check("library: demo notes beside the slide are dropped", not any(t.startswith("Keywords:") for t in bar["texts"]))
+    from pptx import Presentation
+    named = [c["name"] for c in library.charts(Presentation(str(library.template_path("bar-column-5"))).slides[0])]
+    check("library: several charts named c1..c4 in reading order", named == ["c1", "c2", "c3", "c4"])
+    mekko = next(e for e in index if e["id"] == "mekko-2")
+    check("library: a datasheet with the 100%= row is detected", mekko["charts"][0].get("total") == 11.0)
+    check("library: one without it is not", "total" not in bar["charts"][0])
+    bad_name = library.fill_template(library.template_path("bar-column-1"), {"zz": {"categories": ["a"],
+                                                                                    "series": [{"values": [1]}]}})
+    check("library: unknown chart name refused", not bad_name["success"] and "c1" in bad_name["errors"][0])
+    from pathlib import Path
+    from converter import PPTTC_EXE
+    if not Path(PPTTC_EXE).is_file():
+        return
+    filled = server.fill_chart_template("waterfall-1", {"c1": {"categories": ["Rev", "Cost", "Profit"],
+                                                               "series": [{"name": "m", "values": [10, -4, "e"]}]}},
+                                        title="Bridge", texts={"Insert chart title here": "USD m"},
+                                        output_name="test_library_fill")
+    check("library: fill runs ppttc.exe and the chart shows the new categories",
+          filled["success"] and filled["filled"] == ["c1"])
+    if filled["success"]:
+        slide = Presentation(filled["pptx_path"]).slides[0]
+        texts = [sh.text_frame.text for sh in library.text_shapes(slide)]
+        check("library: title and texts replaced", "Bridge" in texts and "USD m" in texts)
+
+
 def main() -> int:
     suites = [
         test_registry,
@@ -901,15 +1658,23 @@ def main() -> int:
         test_category_key_option,
         test_scatter,
         test_combo,
+        test_table,
+        test_process,
         test_known_option_keys,
         test_validator,
         test_validator_percentage,
         test_autodeck,
+        test_layout,
         test_branding,
         test_palettes,
         test_autodeck_semantic,
         test_server_smoke,
         test_build_presentation,
+        test_raw_table_pipeline,
+        test_import_chart_data,
+        test_connector_auth,
+        test_connector_app,
+        test_chart_library,
     ]
     for suite in suites:
         suite()

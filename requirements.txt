@@ -2,7 +2,20 @@
 # Install with: python -m pip install -r requirements.txt
 
 # Official Model Context Protocol SDK (FastMCP + stdio transport).
-mcp[cli]>=1.27.1
+# Pinned below 2.0: that release removed mcp.server.fastmcp entirely, which
+# this project's server.py depends on (confirmed against mcp 2.0.0 on
+# 2026-08-07 -- see CHANGELOG.md).
+mcp[cli]>=1.27.1,<2.0.0
 
 # think-cell JSON data automation library: builds the .ppttc structure.
 thinkcell>=21.10.12
+
+# Reads .xlsx/.xlsm spreadsheets for the import_chart_data tool.
+openpyxl>=3.1.0
+
+# Cut, name and fill think-cell slide templates (library.py).
+python-pptx>=1.0.0
+olefile>=0.46
+
+# Drives PowerPoint for the insert_into_powerpoint tool (Windows only).
+pywin32>=306; sys_platform == "win32"
