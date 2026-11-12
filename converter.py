@@ -14,6 +14,13 @@ from typing import Any
 DEFAULT_THINKCELL_DIR = r"C:\Program Files (x86)\think-cell"
 
 
+def find_ppttc_exe(folder: str | Path) -> str:
+    """ppttc.exe in think-cell's install folder, or in its ``ppttc`` subfolder (where the manual puts it)."""
+    root = Path(folder) / "ppttc.exe"
+    sub = Path(folder) / "ppttc" / "ppttc.exe"
+    return str(sub if sub.is_file() and not root.is_file() else root)
+
+
 def find_thinkcell_dir() -> str:
     """think-cell's install directory: the THINKCELL_DIR environment variable,
     else the install location Windows records for think-cell (it can be
@@ -37,7 +44,7 @@ def find_thinkcell_dir() -> str:
                             location = winreg.QueryValueEx(app, "InstallLocation")[0]
                         except OSError:
                             continue
-                        if name == "think-cell" and location and (Path(location) / "ppttc.exe").is_file():
+                        if name == "think-cell" and location and Path(find_ppttc_exe(location)).is_file():
                             return location.rstrip("\\")
         except OSError:
             continue
@@ -47,7 +54,7 @@ def find_thinkcell_dir() -> str:
 THINKCELL_DIR = find_thinkcell_dir()
 
 # Default location of the think-cell command-line converter.
-PPTTC_EXE = str(Path(THINKCELL_DIR) / "ppttc.exe")
+PPTTC_EXE = find_ppttc_exe(THINKCELL_DIR)
 
 # Conversion drives PowerPoint under the hood, so allow a generous timeout.
 CONVERT_TIMEOUT_SECONDS = 180

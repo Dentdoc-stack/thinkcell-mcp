@@ -29,6 +29,7 @@ Use it in three ways:
 | `list_chart_templates` | List think-cell's chart library (34 designs) and your saved slides. |
 | `fill_chart_template` | Fill one of those templates with your data, title and texts. |
 | `template_from_slide` | Save a think-cell slide of your own as a reusable template. |
+| `update_open_charts` | Give named charts in the open deck new numbers, in place. |
 
 Supported chart types: `waterfall`, `bar`, `stacked_bar`, `line`, `scatter`,
 `mekko`, `area`, `combo`, `table`, `process`.

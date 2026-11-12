@@ -27,10 +27,14 @@ from pathlib import Path
 from typing import Any
 
 from autodeck import OUTPUT_DIR, THINKCELL_DIR
+from validator import validate_ppttc_data
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 LIBRARY_DIR = PROJECT_ROOT / "templates" / "library"
-USER_DIR = PROJECT_ROOT / "templates" / "user"
+BUNDLED_USER_DIR = PROJECT_ROOT / "templates" / "user"  # templates that came with the package
+# New user templates go beside the outputs when THINKCELL_OUTPUT_DIR is set (the desktop extension):
+# Claude Desktop replaces the install folder on every extension update.
+USER_DIR = OUTPUT_DIR / "templates" / "user" if os.environ.get("THINKCELL_OUTPUT_DIR") else BUNDLED_USER_DIR
 INDEX_FILE = LIBRARY_DIR / "index.json"
 INSTALL_LIBRARY = THINKCELL_DIR / "templates" / "think-cell Charts"
 
@@ -172,6 +176,19 @@ def _datasheet(xml: bytes, body: bytes) -> tuple[list[str], int, float | None]:
     return cats, series, total
 
 
+def _datasheet_fill(xml: bytes, body: bytes) -> bool | None:
+    """Whether a chart has "Use Datasheet Fill" on, so think-cell applies ``fill`` colours (None: not known).
+
+    The flag is ``<m_bExcelOnTop>`` of the chart's datasheet: in think-cell's own automation template the one
+    chart that has it on is the one whose fills show. Setting it here is not enough to make them show.
+    """
+    table = re.search(rb'<m_dtable idref="(\d+)"/>', body)
+    sheet = table and re.search(rb'<CSequenceChartDataTable id="%s"[^>]*>(.*?)</CSequenceChartDataTable>'
+                                % table.group(1), xml, re.S)
+    flag = sheet and re.search(rb'<m_bExcelOnTop val="(\d)"/>', sheet.group(1))
+    return flag.group(1) == b"1" if flag else None
+
+
 def charts(slide) -> list[dict[str, Any]]:
     """The think-cell charts on a slide, in reading order."""
     out = []
@@ -187,7 +204,7 @@ def charts(slide) -> list[dict[str, Any]]:
             cats, series, total = _datasheet(xml, body)
             out.append({"id": cid, "kind": CHART_CLASSES[cls], "name": unescape(name.group(1).decode("utf-8")),
                         "frame": _frame(xml, body), "categories": cats, "series": series, "total": total,
-                        "part": part})
+                        "datasheet_fill": _datasheet_fill(xml, body), "part": part})
     # reading order: half-inch bands from the top, then left to right; frameless ones last
     out.sort(key=lambda c: (c["frame"] is None, round(c["frame"][1] / 457200) if c["frame"] else 0,
                             c["frame"][0] if c["frame"] else 0))
@@ -381,19 +398,21 @@ def ensure_library(rebuild: bool = False) -> list[dict[str, Any]]:
 
 
 def user_templates() -> list[dict[str, Any]]:
-    out = []
-    for meta in sorted(USER_DIR.glob("*.json")):
-        out.append(json.loads(meta.read_text(encoding="utf-8")))
-    return out
+    found = {}  # by file name: a saved template replaces a bundled one of the same name
+    for folder in (BUNDLED_USER_DIR, USER_DIR):
+        for meta in folder.glob("*.json"):
+            found[meta.name] = json.loads(meta.read_text(encoding="utf-8"))
+    return [found[name] for name in sorted(found)]
 
 
 def template_path(template_id: str) -> Path | None:
     """``user/<name>`` or a library id -> the template file, if it exists."""
     if template_id.startswith("user/"):
-        path = USER_DIR / f"{_slug(template_id[5:])}.pptx"
+        name = f"{_slug(template_id[5:])}.pptx"
+        paths = [USER_DIR / name, BUNDLED_USER_DIR / name]
     else:
-        path = LIBRARY_DIR / f"{_slug(template_id)}.pptx"
-    return path if path.is_file() else None
+        paths = [LIBRARY_DIR / f"{_slug(template_id)}.pptx"]
+    return next((path for path in paths if path.is_file()), None)
 
 
 def save_user_template(source: Path, slide_number: int, name: str) -> dict[str, Any]:
@@ -442,6 +461,9 @@ def chart_table(spec: dict[str, Any]) -> list[list[Any]]:
             raise ValueError(f"'total' must be one number or one per category ({len(cats)})")
         rows.append([None] + [_cell(t, "number") for t in totals])
     for k, s in enumerate(series):
+        if s is None:  # an empty datasheet row: the series after it keep their theme colours
+            rows.append([])
+            continue
         values = s.get("values") if isinstance(s, dict) else None
         if not isinstance(values, list) or len(values) != len(cats):
             raise ValueError(f"series[{k}].values must list one value per category ({len(cats)})")
@@ -465,6 +487,38 @@ def _set_title(pptx: Path, title: str) -> bool:
     return True
 
 
+def _tables(charts_data: dict[str, Any], known: dict[str, dict[str, Any]], template: str) -> tuple[list, list[str]]:
+    """The ppttc ``data`` entries for ``charts_data`` (the chart's typed-in 100%= value kept), and any errors."""
+    errors, data = [], []
+    for name, spec in charts_data.items():
+        spec = dict(spec) if isinstance(spec, dict) else {}
+        if "table" not in spec and "total" not in spec and known[name]["total"] is not None:
+            spec["total"] = known[name]["total"]  # keep the template's typed-in 100%= value
+        try:
+            data.append({"name": name, "table": chart_table(spec)})
+        except ValueError as exc:
+            errors.append(f"{name}: {exc}")
+    if not errors:  # a bad fill or raw table is caught before think-cell runs
+        errors = validate_ppttc_data([{"template": template, "data": data}])["errors"]
+    return data, errors
+
+
+def _taken(charts_data: dict[str, Any], after: list[dict[str, Any]]) -> tuple[list[str], list[str], list[str]]:
+    """Chart names that now show the new categories, that could not be checked, and that did not take the data."""
+    filled, unchecked, missed = [], [], []
+    by_name = {c["name"]: c for c in after}
+    for name, spec in charts_data.items():
+        want = [str(c) for c in spec.get("categories", [])] if isinstance(spec, dict) else []
+        got = by_name.get(name, {}).get("categories")
+        if not want or not got:
+            unchecked.append(name)
+        elif [g.strip() for g in got[:len(want)]] == [w.strip() for w in want]:
+            filled.append(name)
+        else:
+            missed.append(name)
+    return filled, unchecked, missed
+
+
 def fill_template(template: Path, charts_data: dict[str, dict[str, Any]], title: str = "",
                   output_name: str = "", texts: dict[str, str] | None = None) -> dict[str, Any]:
     """Fill a named template through ppttc.exe; reports which charts show the new categories."""
@@ -479,21 +533,14 @@ def fill_template(template: Path, charts_data: dict[str, dict[str, Any]], title:
     if unknown:
         return {"success": False, "pptx_path": None,
                 "errors": [f"No chart named {', '.join(unknown)} in this template (it has {', '.join(sorted(known))})"]}
-    errors, data = [], []
-    for name, spec in charts_data.items():
-        spec = dict(spec) if isinstance(spec, dict) else {}
-        if "table" not in spec and "total" not in spec and known[name]["total"] is not None:
-            spec["total"] = known[name]["total"]  # keep the template's typed-in 100%= value
-        try:
-            data.append({"name": name, "table": chart_table(spec)})
-        except ValueError as exc:
-            errors.append(f"{name}: {exc}")
+    data, errors = _tables(charts_data, known, str(template))
     if errors:
         return {"success": False, "pptx_path": None, "errors": errors}
+    document = [{"template": str(template), "data": data}]
     stem = _slug(output_name or template.stem)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     job = OUTPUT_DIR / f"{stem}.ppttc"
-    job.write_text(json.dumps([{"template": str(template), "data": data}], indent=1), encoding="utf-8")
+    job.write_text(json.dumps(document, indent=1), encoding="utf-8")
     result = convert_ppttc(str(job))
     if not result.get("success"):
         return {"success": False, "pptx_path": None, "ppttc_path": str(job),
@@ -501,20 +548,111 @@ def fill_template(template: Path, charts_data: dict[str, dict[str, Any]], title:
     pptx = Path(result["pptx_path"])
     titled = _set_title(pptx, title) if title else False
     unmatched = replace_texts(pptx, texts) if texts else []
-    filled, unchecked, missed = [], [], []
-    after = {c["name"]: c for c in charts(Presentation(str(pptx)).slides[0])}
-    for name, spec in charts_data.items():
-        want = [str(c) for c in spec.get("categories", [])] if isinstance(spec, dict) else []
-        got = after.get(name, {}).get("categories")
-        if not want or not got:
-            unchecked.append(name)
-        elif [g.strip() for g in got[:len(want)]] == [w.strip() for w in want]:
-            filled.append(name)
-        else:
-            missed.append(name)
+    filled, unchecked, missed = _taken(charts_data, charts(Presentation(str(pptx)).slides[0]))
     warnings = [f"{', '.join(missed)} did not take the new data: think-cell skipped it. Open that chart's "
                 f"datasheet in the template once in PowerPoint, save, and try again."] if missed else []
     if unmatched:
         warnings.append(f"No text shape reads exactly {unmatched}; see the template's 'texts'.")
+    unfilled = [name for name, spec in charts_data.items() if known[name]["datasheet_fill"] is False
+                and isinstance(spec, dict) and any(isinstance(s, dict) and s.get("fill") for s in spec.get("series") or [])]
+    if unfilled:
+        warnings.append(f"{', '.join(unfilled)}: the fill colours were not applied, because this template's chart "
+                        f"does not use datasheet fills. In PowerPoint, select the chart in the template, choose "
+                        f"'Use Datasheet Fill' in its fill scheme list, save, and fill it again.")
     return {"success": True, "pptx_path": str(pptx), "ppttc_path": str(job), "filled": filled,
             "not_checked": unchecked, "not_filled": missed, "title_set": titled, "errors": [], "warnings": warnings}
+
+# --------------------------------------------------------------------------
+# updating the open deck in place
+# --------------------------------------------------------------------------
+def _excel_cell(cell, value: Any) -> None:
+    """Write one ppttc cell into an Excel cell, typed so think-cell reads it the same way."""
+    import datetime
+
+    if value is None:
+        return
+    if "string" in value:
+        cell.NumberFormat = "@"  # "2025" stays text
+        cell.Value = value["string"]
+    elif "percentage" in value:
+        cell.Value = value["percentage"] / 100
+        cell.NumberFormat = "0.0%"
+    elif "date" in value:
+        cell.Value = datetime.datetime.fromisoformat(value["date"])
+    else:
+        cell.Value = value["number"]
+    fill = value.get("fill", "")
+    rgb = re.findall(r"[0-9A-Fa-f]{2}", fill) if fill.startswith("#") else ["%02x" % int(n) for n in re.findall(r"\d+", fill)]
+    if len(rgb) == 3:
+        cell.Interior.Color = int(rgb[2] + rgb[1] + rgb[0], 16)  # Excel colours are BGR
+
+
+def update_open_charts(charts_data: dict[str, dict[str, Any]], slide_number: int, pres=None) -> dict[str, Any]:
+    """Refill named think-cell charts on a slide of the presentation open in PowerPoint, in place.
+
+    Uses think-cell's ``UpdateBatch`` API (manual: Automation with Excel data), which takes its data from an
+    Excel range: a hidden Excel of its own is started for the call and closed again. ``pres`` is for tests.
+    """
+    import shutil
+
+    import pythoncom
+    import win32com.client
+    from pptx import Presentation
+
+    if not isinstance(charts_data, dict) or not charts_data:
+        return {"success": False, "errors": ["Give data for at least one chart"]}
+    pythoncom.CoInitialize()
+    excel = book = None
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        try:
+            pres = pres or win32com.client.GetActiveObject("PowerPoint.Application").ActivePresentation
+            if not 1 <= slide_number <= pres.Slides.Count:
+                return {"success": False, "errors": [
+                    f"Slide {slide_number} does not exist ({pres.Name} has {pres.Slides.Count} slides)"]}
+            pres.SaveCopyAs(str(tmp / "before.pptx"))
+        except Exception as exc:  # pywintypes.com_error: PowerPoint closed, no deck open
+            return {"success": False, "errors": [
+                f"Could not read the open presentation ({exc}). Open the deck in PowerPoint on this PC."]}
+        found = charts(Presentation(str(tmp / "before.pptx")).slides[slide_number - 1])
+        known = {c["name"]: c for c in found if c["name"]}
+        unknown = sorted(set(charts_data) - set(known))
+        if unknown:
+            unnamed = sum(1 for c in found if not c["name"])
+            return {"success": False, "errors": [
+                f"No chart named {', '.join(unknown)} on slide {slide_number} (named charts: "
+                f"{', '.join(sorted(known)) or 'none'}; charts without a name: {unnamed}). Slides made by "
+                f"fill_chart_template or create_auto_deck keep their names; name any other chart in "
+                f"think-cell's mini toolbar, or use template_from_slide and insert the filled slide instead."]}
+        data, errors = _tables(charts_data, known, "open.pptx")
+        if errors:
+            return {"success": False, "errors": errors}
+        try:
+            excel = win32com.client.DispatchEx("Excel.Application")  # its own instance: the user's Excel is untouched
+            excel.DisplayAlerts = False
+            update = excel.COMAddIns("thinkcell.addin").Object.CreateUpdate()
+            book = excel.Workbooks.Add()
+            for entry in data:
+                sheet = book.Worksheets.Add()
+                width = max(len(row) for row in entry["table"])
+                for r, row in enumerate(entry["table"], 1):
+                    for c, value in enumerate(row, 1):
+                        _excel_cell(sheet.Cells(r, c), value)
+                area = sheet.Range(sheet.Cells(1, 1), sheet.Cells(len(entry["table"]), width))
+                update.AddRangeData(pres.Slides(slide_number), entry["name"], area, False)
+            update.Send()
+            pres.SaveCopyAs(str(tmp / "after.pptx"))
+        except Exception as exc:  # pywintypes.com_error: Excel or think-cell's Excel add-in not available
+            return {"success": False, "errors": [f"think-cell could not update the charts ({exc})."]}
+        after = charts(Presentation(str(tmp / "after.pptx")).slides[slide_number - 1])
+        updated, unchecked, missed = _taken(charts_data, after)
+        return {"success": not missed, "presentation": pres.Name, "slide": slide_number, "updated": updated,
+                "not_checked": unchecked, "not_updated": missed,
+                "errors": [f"{', '.join(missed)} did not take the new data"] if missed else []}
+    finally:
+        if book is not None:
+            book.Close(False)
+        if excel is not None:
+            excel.Quit()
+        shutil.rmtree(tmp, ignore_errors=True)
+        pythoncom.CoUninitialize()

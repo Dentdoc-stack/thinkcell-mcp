@@ -483,6 +483,13 @@ def test_validator() -> None:
             "exactly one of",
         ),
     )
+    fill_doc = lambda fill: [{"template": "d.pptx", "data": [  # noqa: E731
+        {"name": "C", "table": [[{"number": 1, "fill": fill}]]}]}]
+    check("validator: rgb(r,g,b) fill accepted (think-cell's schema)",
+          validate_ppttc_data(fill_doc("rgb(255,0,0)"))["valid"])
+    for bad in ("red", "#f00", "rgb(255, 0, 0)", "rgb(256,0,0)", 5):
+        check(f"validator: fill {bad!r} rejected",
+              has(validate_ppttc_data(fill_doc(bad))["errors"], "fill must be"))
     check(
         "validator: cell with two type keys rejected",
         has(
@@ -1122,6 +1129,7 @@ def test_server_smoke() -> None:
         "convert_to_pptx", "validate_ppttc", "list_chart_types",
         "diagnose_thinkcell", "insert_into_powerpoint",
         "list_chart_templates", "template_from_slide", "fill_chart_template",
+        "update_open_charts",
     ]
     for name in tools:
         check(f"server: tool '{name}' is defined", hasattr(server, name))
@@ -1439,6 +1447,19 @@ def test_connector_auth() -> None:
         check("API key is accepted as a bearer token", await keyed.load_access_token("k-123") is not None)
         check("wrong API key refused", await keyed.load_access_token("k-124") is None)
         check("no API key configured -> none accepted", await auth.load_access_token("k-123") is None)
+        # Registration and /authorize need no sign-in, so they are capped.
+        for i in range(oauth.MAX_CLIENTS + 5):
+            await keyed.register_client(OAuthClientInformationFull(client_id=f"x{i}",
+                                                                   redirect_uris=["https://claude.ai/cb"]))
+        check("client registrations are capped", len(keyed.clients) <= oauth.MAX_CLIENTS)
+        check("a signed-in client survives the cap", "c1" in keyed.clients and "x0" not in keyed.clients)
+        for _ in range(oauth.MAX_PENDING + 5):
+            await keyed.authorize(client, params)
+        check("pending sign-ins are capped", len(keyed.pending) <= oauth.MAX_PENDING)
+        check("state is written in one step", not state.with_suffix(".tmp").exists())
+        state.write_text('{"clients": {"c1"', encoding="utf-8")
+        check("an unreadable state file starts empty instead of crashing",
+              oauth.ConnectorAuth(state, "https://pc.example", "K7MP-Q2XD").clients == {})
 
     with tempfile.TemporaryDirectory() as tmp:
         asyncio.run(flow(Path(tmp) / "oauth_state.json"))
@@ -1519,6 +1540,9 @@ def test_connector_app() -> None:
                           and "access-control-allow-origin" not in evil.headers)
                     get = await c.get("/mcp", headers={"Origin": assist})
                     check("GET /mcp -> 405 (stateless: no stream to open)", get.status_code == 405)
+                    import modern_http
+                    huge = await c.post("/mcp", content=b"x" * (modern_http.MAX_BODY + 1), headers={"Origin": assist})
+                    check("oversized body -> 413 before sign-in", huge.status_code == 413)
                     own = await c.post("/connect", data={"request": "missing", "code": "x"},
                                        headers={"Origin": "https://pc.example"})
                     check("connect form posts from the server's own origin", own.status_code == 400)
@@ -1552,6 +1576,10 @@ def test_connector_app() -> None:
                     out = called.json().get("result", {})
                     check("2026-07-28 tools/call runs the tool", called.status_code == 200
                           and out.get("resultType") == "complete" and not out.get("isError") and out.get("content"))
+                    slow = await modern("tools/call", {"name": "fill_chart_template", "arguments": {
+                        "template_id": "no-such-template", "charts": {"c1": {}}}}, **{"Mcp-Name": "fill_chart_template"})
+                    check("a slow tool answers from its worker thread", slow.status_code == 200
+                          and "list_chart_templates" in slow.text)
                     b64 = await modern("tools/call", {"name": "list_chart_types", "arguments": {}},
                                        **{"Mcp-Name": "=?base64?bGlzdF9jaGFydF90eXBlcw==?="})
                     check("base64 Mcp-Name accepted", b64.status_code == 200)
@@ -1582,6 +1610,9 @@ def test_connector_app() -> None:
 
 def test_chart_library() -> None:
     """Template library: datasheet tables always; cutting, naming and filling when think-cell is installed."""
+    import tempfile
+    from pathlib import Path
+
     import library
     import server
 
@@ -1606,8 +1637,37 @@ def test_chart_library() -> None:
         except ValueError:
             check(f"library: rejects wrong {label}", True)
     check("library: raw table passes through", library.chart_table({"table": [[None]]}) == [[None]])
+    gap = library.chart_table({"categories": ["a"], "series": [{"values": [1]}, None, {"values": [2]}]})
+    check("library: a null series is an empty row (keeps the next series' colours)", gap[2] == [] and len(gap) == 4)
+    from converter import find_ppttc_exe
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "ppttc").mkdir()
+        (Path(tmp) / "ppttc" / "ppttc.exe").write_bytes(b"")
+        check("converter: ppttc.exe is also found in the ppttc subfolder",
+              find_ppttc_exe(tmp) == str(Path(tmp) / "ppttc" / "ppttc.exe"))
+        (Path(tmp) / "ppttc.exe").write_bytes(b"")
+        check("converter: the install root wins when both exist", find_ppttc_exe(tmp) == str(Path(tmp) / "ppttc.exe"))
+    check("library: update_open_charts needs data", not server.update_open_charts(1, {})["success"])
     unknown = server.fill_chart_template("no-such-template", {"c1": {}})
     check("library: unknown template id refused", not unknown["success"] and "list_chart_templates" in unknown["errors"][0])
+
+    # Saved templates live beside the outputs; ones that came with the package are still found.
+    import tempfile
+    from pathlib import Path
+    saved_dirs = (library.USER_DIR, library.BUNDLED_USER_DIR)
+    with tempfile.TemporaryDirectory() as tmp:
+        library.USER_DIR, library.BUNDLED_USER_DIR = Path(tmp) / "mine", Path(tmp) / "bundled"
+        try:
+            for folder, title in ((library.BUNDLED_USER_DIR, "old"), (library.USER_DIR, "new")):
+                folder.mkdir()
+                (folder / "t.json").write_text(json.dumps({"id": "user/t", "title": title}), encoding="utf-8")
+            (library.BUNDLED_USER_DIR / "only.pptx").write_bytes(b"")
+            check("library: a saved template replaces a bundled one of the same name",
+                  [e["title"] for e in library.user_templates()] == ["new"])
+            check("library: a bundled user template is still found",
+                  library.template_path("user/only") == library.BUNDLED_USER_DIR / "only.pptx")
+        finally:
+            library.USER_DIR, library.BUNDLED_USER_DIR = saved_dirs
 
     # Cutting and naming need think-cell's installed library (absent in CI) and pywin32.
     try:
@@ -1633,6 +1693,12 @@ def test_chart_library() -> None:
     bad_name = library.fill_template(library.template_path("bar-column-1"), {"zz": {"categories": ["a"],
                                                                                     "series": [{"values": [1]}]}})
     check("library: unknown chart name refused", not bad_name["success"] and "c1" in bad_name["errors"][0])
+    bad_fill = library.fill_template(library.template_path("bar-column-1"), {"c1": {
+        "categories": ["a"], "series": [{"values": [1], "fill": "red"}]}})
+    check("library: a bad fill colour is refused before ppttc.exe runs",
+          not bad_fill["success"] and "fill must be" in bad_fill["errors"][0])
+    check("library: think-cell's library charts do not use datasheet fills",
+          library.charts(Presentation(str(library.template_path("bar-column-1"))).slides[0])[0]["datasheet_fill"] is False)
     from pathlib import Path
     from converter import PPTTC_EXE
     if not Path(PPTTC_EXE).is_file():
@@ -1643,6 +1709,10 @@ def test_chart_library() -> None:
                                         output_name="test_library_fill")
     check("library: fill runs ppttc.exe and the chart shows the new categories",
           filled["success"] and filled["filled"] == ["c1"])
+    coloured = server.fill_chart_template("bar-column-1", {"c1": {"categories": ["A", "B"], "series": [
+        {"name": "s", "values": [1, 2], "fill": "#ff0000"}]}}, output_name="test_library_fill_colour")
+    check("library: a fill the template cannot show gives a warning",
+          coloured["success"] and any("Use Datasheet Fill" in w for w in coloured["warnings"]))
     if filled["success"]:
         slide = Presentation(filled["pptx_path"]).slides[0]
         texts = [sh.text_frame.text for sh in library.text_shapes(slide)]

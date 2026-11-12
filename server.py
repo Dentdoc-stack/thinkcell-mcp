@@ -1,6 +1,6 @@
 """think-cell MCP server.
 
-Exposes ten tools over stdio for building think-cell JSON automation
+Exposes its core tools over stdio for building think-cell JSON automation
 (``.ppttc``) files and converting them to PowerPoint (``.pptx``) with
 think-cell's ``ppttc.exe``:
 
@@ -19,7 +19,8 @@ plus ``insert_into_powerpoint``, which puts a converted deck's slides into
 the presentation open in PowerPoint on this PC, and three template tools
 (``library.py``): ``list_chart_templates`` (think-cell's own chart library
 and saved slides), ``template_from_slide`` (any slide with think-cell charts
-becomes a template) and ``fill_chart_template``.
+becomes a template) and ``fill_chart_template``, and ``update_open_charts``, which
+refills named charts in the open presentation in place.
 
 Run directly (``python server.py``) to start the server on stdio. As a
 remote connector (Claude in PowerPoint, claude.ai) it runs with ``--http``
@@ -34,10 +35,12 @@ import html
 import inspect
 import json
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import anyio
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -51,7 +54,7 @@ from charts import (
     write_ppttc_slides,
 )
 from autodeck import AUTO_TEMPLATE_PATH, OUTPUT_DIR, build_auto_deck, ensure_auto_template
-from branding import apply_branding
+from branding import apply_branding, load_style
 from palettes import get_palette, list_palettes
 from converter import convert_ppttc
 from data_import import import_spreadsheet
@@ -104,6 +107,26 @@ def _local_paths(*names: str):
             return fn(*args, **kwargs)
         return inner
     return wrap
+
+
+_JOB_LOCK = threading.Lock()  # think-cell and PowerPoint take one job at a time
+
+
+def _slow_tool(fn):
+    """Register ``fn`` as a tool that runs in a worker thread.
+
+    The SDK calls plain ``def`` tools on the event loop, so one ppttc.exe run
+    (up to 3 minutes) would stall sign-in and every other request of the
+    remote connector. The plain function is returned for direct calls.
+    """
+    @functools.wraps(fn)
+    async def runner(*args, **kwargs):
+        def job():
+            with _JOB_LOCK:
+                return fn(*args, **kwargs)
+        return await anyio.to_thread.run_sync(job)
+    mcp.tool()(runner)
+    return fn
 
 
 def _chunked_only(app):
@@ -598,11 +621,13 @@ def create_auto_deck(
     return build_auto_deck(slides, output_name)
 
 
-@mcp.tool()
+@_slow_tool
+@_local_paths("style_file")
 def set_deck_branding(
     accent_colors: list[str] | None = None,
     palette: str = "",
     remove_logo: bool = True,
+    style_file: str = "",
 ) -> dict[str, Any]:
     """Re-brand the template that ``create_auto_deck`` uses.
 
@@ -628,10 +653,16 @@ def set_deck_branding(
             ``accent_colors`` is given.
         remove_logo: When True (default) the think-cell logo is removed from
             the slide master.
+        style_file: Optional path to a think-cell style file (``.xml``, e.g.
+            your organisation's, or one from think-cell's ``styles`` folder).
+            It is loaded with think-cell's own ``LoadStyle`` and sets what
+            theme colours cannot: fill schemes, line styles and label fonts.
+            Needs PowerPoint with think-cell on this PC.
 
     Returns:
         ``{"success": bool, "template": str, "accents": list[str],
-        "logo_removed": bool, "errors": list[str]}``.
+        "logo_removed": bool, "errors": list[str]}``, plus ``"style"`` (the
+        name think-cell reports) when ``style_file`` is given.
     """
     if accent_colors is None and palette:
         try:
@@ -656,7 +687,11 @@ def set_deck_branding(
                 "template can be obtained first."
             ],
         }
-    return apply_branding(AUTO_TEMPLATE_PATH, accent_colors, remove_logo)
+    result = apply_branding(AUTO_TEMPLATE_PATH, accent_colors, remove_logo)
+    if style_file and result.get("success"):
+        styled = load_style(AUTO_TEMPLATE_PATH, style_file)
+        result.update(success=styled["success"], style=styled["style"], errors=styled["errors"])
+    return result
 
 
 @mcp.tool()
@@ -705,7 +740,7 @@ def import_chart_data(file_path: str, sheet_name: str = "") -> dict[str, Any]:
     return import_spreadsheet(file_path, sheet_name)
 
 
-@mcp.tool()
+@_slow_tool
 @_local_paths("ppttc_path", "output_path")
 def convert_to_pptx(
     ppttc_path: str,
@@ -844,7 +879,7 @@ def diagnose_thinkcell(template_path: str = "") -> dict[str, Any]:
     return run_diagnostics(template_path or None)
 
 
-@mcp.tool()
+@_slow_tool
 @_local_paths("pptx_path")
 def insert_into_powerpoint(pptx_path: str, after_slide: int = -1) -> dict[str, Any]:
     """Insert every slide of a ``.pptx`` into the presentation open in PowerPoint.
@@ -896,7 +931,7 @@ def _chart_summary(entry: dict[str, Any]) -> dict[str, Any]:
             "texts": entry.get("texts", [])}
 
 
-@mcp.tool()
+@_slow_tool
 def list_chart_templates(search: str = "") -> dict[str, Any]:
     """List ready-to-fill think-cell slide templates: think-cell's own chart library plus the user's saved slides.
 
@@ -929,7 +964,7 @@ def list_chart_templates(search: str = "") -> dict[str, Any]:
     return {"templates": [_chart_summary(e) for e in hits], "errors": []}
 
 
-@mcp.tool()
+@_slow_tool
 @_local_paths("pptx_path")
 def template_from_slide(slide_number: int, name: str, pptx_path: str = "") -> dict[str, Any]:
     """Save a slide with think-cell charts as a reusable template, keeping its exact look.
@@ -986,7 +1021,7 @@ def template_from_slide(slide_number: int, name: str, pptx_path: str = "") -> di
     return {"success": True, "template": _chart_summary(entry), "errors": []}
 
 
-@mcp.tool()
+@_slow_tool
 def fill_chart_template(
     template_id: str,
     charts: dict[str, Any],
@@ -1034,6 +1069,37 @@ def fill_chart_template(
         return library.fill_template(path, charts, title=title, output_name=output_name, texts=texts)
     except (OSError, ValueError) as exc:
         return {"success": False, "pptx_path": None, "errors": [str(exc)]}
+
+
+@_slow_tool
+def update_open_charts(slide_number: int, charts: dict[str, Any]) -> dict[str, Any]:
+    """Refill think-cell charts on a slide of the presentation open in PowerPoint, in place.
+
+    Use it to give a chart that is already in the user's deck new numbers without inserting a new slide: the
+    chart keeps its position, style and annotations. It works on charts that have a think-cell name. Slides
+    made by ``fill_chart_template`` (``c1``, ``c2``, ...) and ``create_auto_deck`` (``LeftChart``,
+    ``RightChart``) keep their names after ``insert_into_powerpoint``; a wrong name returns the names on the
+    slide. The open deck is changed but not saved (the user can undo or close without saving).
+
+    It uses think-cell's ``UpdateBatch`` API, which reads its data from Excel: a hidden Excel is started for
+    the call and closed again. Needs PowerPoint and Excel with think-cell on this PC.
+
+    Args:
+        slide_number: 1-based number of the slide in the open presentation.
+        charts: Data per chart name, in the same form as ``fill_chart_template``'s ``charts``.
+
+    Returns:
+        ``{"success", "presentation", "slide", "updated": [...], "not_updated": [...], "not_checked": [...],
+        "errors"}``. ``updated`` charts were checked to show the new categories.
+    """
+    import library
+
+    try:
+        return library.update_open_charts(charts, slide_number)
+    except ImportError:
+        return {"success": False, "errors": ["pywin32 is not installed: python -m pip install pywin32"]}
+    except (OSError, ValueError, KeyError) as exc:
+        return {"success": False, "errors": [str(exc)]}
 
 
 def main() -> None:

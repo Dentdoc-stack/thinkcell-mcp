@@ -12,6 +12,7 @@ fields, returning ``{"valid": bool, "errors": list[str]}``.
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 # Keys that identify a cell's value type. Exactly one must be present.
@@ -26,6 +27,10 @@ NUMERIC_CELL_KEYS: frozenset[str] = frozenset({"number", "percentage"})
 
 # Keys allowed on a cell object in addition to the single type key.
 CELL_EXTRA_KEYS: frozenset[str] = frozenset({"fill"})
+
+# The fill pattern of think-cell's own ppttc-schema.json: ppttc.exe rejects anything else.
+_BYTE = r"0*(2(5[0-5]|[0-4][0-9])|1[0-9]{2}|[0-9]{1,2})"
+_FILL = re.compile(rf"^(#[0-9A-Fa-f]{{6}}|rgb\(({_BYTE},){{2}}{_BYTE}\))$")
 
 
 def validate_ppttc_data(document: Any) -> dict[str, Any]:
@@ -184,6 +189,10 @@ def _validate_cell(cell: Any, where: str) -> list[str]:
     unsupported = keys - CELL_TYPE_KEYS - CELL_EXTRA_KEYS
     if unsupported:
         errors.append(f"{where} has unsupported key(s): {sorted(unsupported)}")
+
+    fill = cell.get("fill")
+    if "fill" in cell and not (isinstance(fill, str) and _FILL.match(fill)):
+        errors.append(f"{where}.fill must be '#RRGGBB' or 'rgb(r,g,b)' without spaces, got {fill!r}")
 
     type_key = next(iter(type_keys))
     value = cell[type_key]

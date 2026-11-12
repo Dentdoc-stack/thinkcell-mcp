@@ -17,6 +17,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `template_from_slide`: saves a slide of the user's own deck (or the one
     open in PowerPoint) as a template, naming its charts in code.
 - The "100%=" datasheet row is detected and filled automatically.
+- `update_open_charts`: gives named think-cell charts in the presentation
+  open in PowerPoint new numbers in place, through think-cell's `UpdateBatch`
+  API and a hidden Excel. Slides made by `fill_chart_template` and
+  `create_auto_deck` keep their chart names, so they can be refreshed later.
+- `set_deck_branding` takes a `style_file`: a think-cell style file loaded
+  with think-cell's own `LoadStyle` (fill schemes, line styles, label fonts).
+- A `null` entry in a template's `series` is an empty datasheet row, so the
+  series after it keep their theme colours.
+- Warnings when `fill` colours cannot show: the template's chart does not use
+  datasheet fills (`fill_chart_template`), or the colours are on the auto
+  deck's left chart.
+
+### Changed
+
+- Templates saved with `template_from_slide` go to `templates/user` inside
+  the output folder when `THINKCELL_OUTPUT_DIR` is set (the Claude Desktop
+  extension), so an extension update no longer deletes them. Templates that
+  came with the package are still found.
+
+- `ppttc.exe` is also found in the install's `ppttc` subfolder, where the
+  manual puts it.
+
+### Fixed
+
+- **`fill` colours are checked:** `validate_ppttc` and `fill_chart_template`
+  accept only `#RRGGBB` or `rgb(r,g,b)`, the pattern of think-cell's own
+  `ppttc-schema.json`. Before, a value such as `red` reached `ppttc.exe`.
+- **Remote connector froze during a conversion:** the slow tools
+  (`convert_to_pptx`, `fill_chart_template`, `template_from_slide`,
+  `list_chart_templates`, `insert_into_powerpoint`, `set_deck_branding`) now
+  run in a worker thread, one at a time, so sign-in and other requests keep
+  working while `ppttc.exe` runs.
+- **Limits on what needs no sign-in:** request bodies over 8 MB get 413;
+  registered clients are capped at 200 (the oldest that never signed in are
+  dropped first) and pending sign-ins at 100.
+- **No crash loop after a half-written file:** `oauth_state.json` and
+  `config.json` are replaced in one step, and an unreadable one is treated
+  as empty.
 
 ## [0.2.0] - 2026-11-07
 

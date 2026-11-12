@@ -35,6 +35,58 @@
 
 ### Registro de aprendizajes
 
+- **2026-11-12 — `UpdateBatch` actualiza el deck abierto en sitio:**
+  `excel.COMAddIns("thinkcell.addin").Object.CreateUpdate()` →
+  `AddRangeData(pres.Slides(n), nombre, rango, False)` → `Send()` rellena el
+  gráfico nombrado dentro de la presentación abierta (probado sin ventana,
+  think-cell 14). Necesita un Excel con el add-in; `update_open_charts` lanza
+  uno propio y oculto con `DispatchEx` y lo cierra. Los nombres `c1`,
+  `LeftChart`… sobreviven a ppttc e `InsertFromFile`. **Por qué importa:** es
+  la única vía para refrescar un gráfico sin insertar un slide nuevo; los
+  gráficos sin nombre no se pueden nombrar por API en el deck vivo.
+
+- **2026-11-12 — "Use Datasheet Fill" = `<m_bExcelOnTop val="1"/>`:** el flag
+  vive en el `CSequenceChartDataTable` del gráfico. En la plantilla oficial
+  solo `RightChart` lo tiene; por eso `fill`/`semantic` no se ven en
+  `left_chart` ni en las 34 plantillas de la biblioteca. Ponerlo a 1 en código
+  NO basta (probado: el color queda en el datasheet pero no se dibuja); hay
+  que marcarlo en PowerPoint. **Por qué importa:** `fill_template` y
+  `create_auto_deck` solo avisan; para verificar colores hay que exportar el
+  slide a PNG por COM, no contar `FF0000` en el XML.
+
+- **2026-11-12 — `LoadStyle` funciona sin ventana:**
+  `ppt.COMAddIns("thinkcell.addin").Object.LoadStyle(pres.SlideMaster, xml)`
+  sobre la plantilla abierta con `WithWindow=False`, luego `Save()`; ppttc
+  sigue rellenando después. Los campos de texto, tablas y Harvey balls con
+  nombre NO están en el OLE `think-cellXML` (solo gráficos), así que
+  `library.py` no puede nombrarlos. **Por qué importa:** el branding de
+  esquemas de relleno va por archivo de estilo, no por el tema.
+
+- **2026-11-12 — `os.replace` falla a ratos en Windows:** el antivirus abre
+  el archivo destino y da `PermissionError`; `oauth.replace_file` reintenta
+  (hasta 1 s). **Por qué importa:** sin el reintento el sign-in fallaba de
+  forma intermitente al guardar `oauth_state.json`.
+
+- **2026-11-11 — Los tools `def` bloquean el event loop (SDK 1.29):** FastMCP
+  llama las funciones síncronas directamente en el loop, así que un
+  `ppttc.exe` (hasta 180 s) congelaba todo el conector `--http`, incluido el
+  sign-in. `_slow_tool` en `server.py` registra un wrapper `async` que corre
+  la función en un hilo (`anyio.to_thread`) bajo un lock único y devuelve la
+  función normal para llamadas directas (los tests la siguen llamando
+  síncrona). `pythoncom` (structured storage y PowerPoint) funciona en esos
+  hilos. **Por qué importa:** cualquier tool nuevo que lance ppttc o COM debe
+  usar `@_slow_tool` en vez de `@mcp.tool()`.
+
+- **2026-11-11 — Plantillas de usuario fuera de la carpeta de instalación:**
+  Claude Desktop reemplaza la carpeta de la extensión en cada actualización.
+  Con `THINKCELL_OUTPUT_DIR` definido, `library.USER_DIR` es
+  `<output>/templates/user`; `BUNDLED_USER_DIR` (las que vienen en el paquete
+  del equipo) se sigue leyendo y una guardada con el mismo nombre la
+  reemplaza. La plantilla auto-deck con branding sigue en la carpeta de
+  instalación (se pierde el branding al actualizar; se rehace con
+  `set_deck_branding`). **Por qué importa:** el paquete del equipo incluye
+  plantillas a propósito; no quitarlas del zip.
+
 - **2026-11-08 — Plantillas de gráficos sin nombrar a mano (`library.py`):**
   los nombres de think-cell viven en el OLE `ppt/embeddings/oleObject*.bin`,
   stream `think-cellXML`, como `<m_strName>` dentro de cada
@@ -192,7 +244,7 @@
 
 ## Qué es este proyecto
 
-Servidor MCP que expone **14 herramientas** (stdio, `--http` para el conector remoto); las principales:
+Servidor MCP que expone **15 herramientas** (stdio, `--http` para el conector remoto); las principales:
 
 | Herramienta | Propósito |
 | --- | --- |
@@ -277,7 +329,7 @@ señal objetiva, reproducible, de una sola orden.
 **Invariantes — el loop NUNCA debe romperlos** (equivalen al `prepare.py` que
 autoresearch prohíbe tocar):
 
-- Los 14 tools MCP siguen registrados e importables (`test_server_smoke`).
+- Los 15 tools MCP siguen registrados e importables (`test_server_smoke`).
 - No se redistribuyen archivos de think-cell: la plantilla se copia del
   install local.
 - Toda herramienta devuelve dicts estructurados; nunca lanza excepción para
@@ -306,7 +358,7 @@ autoresearch prohíbe tocar):
 
 ```
 Thinkcell/
-  server.py          14 herramientas MCP (FastMCP, stdio / --http)
+  server.py          15 herramientas MCP (FastMCP, stdio / --http)
   library.py         biblioteca de plantillas think-cell (cortar, nombrar, rellenar)
   autodeck.py        constructor de .ppttc sin-setup (create_auto_deck)
   branding.py        re-tematiza la plantilla auto-deck (set_deck_branding)

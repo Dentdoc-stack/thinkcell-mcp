@@ -45,12 +45,19 @@ DEFAULT_PORT = 8765
 
 
 def load_config() -> dict:
-    return json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.is_file() else {}
+    try:
+        return json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.is_file() else {}
+    except ValueError:  # unreadable: same as not set up, the commands then say to run setup
+        return {}
 
 
 def save_config(config: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    tmp = CONFIG_FILE.with_suffix(".tmp")  # replaced in one step: never a half-written file
+    tmp.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    from oauth import replace_file
+
+    replace_file(tmp, CONFIG_FILE)
 
 
 def _pythonw() -> str:
@@ -85,13 +92,13 @@ def _ask(prompt: str, default: str = "") -> str:
 
 # ---------------------------------------------------------------- setup
 def setup() -> None:
-    from converter import find_thinkcell_dir
+    from converter import find_ppttc_exe, find_thinkcell_dir
     from oauth import new_connect_code
 
     config = load_config()
     print("think-cell connector setup\n")
 
-    ppttc = Path(find_thinkcell_dir()) / "ppttc.exe"
+    ppttc = Path(find_ppttc_exe(find_thinkcell_dir()))
     print(f"think-cell: {'found, ' + str(ppttc.parent) if ppttc.is_file() else 'NOT FOUND - install think-cell first'}")
 
     ngrok = _ngrok(config)

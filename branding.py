@@ -80,6 +80,40 @@ def strip_logo_from_master(xml: str) -> str:
     return re.sub(r"<p:pic>.*?</p:pic>", _keep, xml, flags=re.DOTALL)
 
 
+def load_style(template_path: str | Path, style_file: str | Path) -> dict[str, Any]:
+    """Load a think-cell style file (.xml) into a template's slide master with think-cell's own ``LoadStyle``.
+
+    A style file sets what the theme colours cannot: think-cell's fill schemes, line styles and label fonts
+    (manual: Style files). PowerPoint opens the template without a window, loads the style and saves it.
+
+    Returns ``{"success": bool, "style": str, "errors": list[str]}``; ``style`` is the name think-cell reports.
+    """
+    template, style = Path(template_path).resolve(), Path(style_file).expanduser().resolve()
+    if not style.is_file() or style.suffix.lower() != ".xml":
+        return {"success": False, "style": "", "errors": [f"Style file not found (a think-cell .xml): {style_file}"]}
+    try:
+        import pythoncom
+        import win32com.client
+    except ImportError:
+        return {"success": False, "style": "", "errors": ["pywin32 is not installed: python -m pip install pywin32"]}
+    pythoncom.CoInitialize()
+    pres = None
+    try:
+        app = win32com.client.Dispatch("PowerPoint.Application")
+        addin = app.COMAddIns("thinkcell.addin").Object
+        pres = app.Presentations.Open(str(template), False, False, False)  # read-write, no window
+        addin.LoadStyle(pres.SlideMaster, str(style))
+        name = addin.GetStyleName(pres.SlideMaster)
+        pres.Save()
+        return {"success": True, "style": name, "errors": []}
+    except Exception as exc:  # pywintypes.com_error: PowerPoint or think-cell not available, bad style file
+        return {"success": False, "style": "", "errors": [f"think-cell could not load the style ({exc})."]}
+    finally:
+        if pres is not None:
+            pres.Close()
+        pythoncom.CoUninitialize()
+
+
 def apply_branding(
     template_path: str | Path,
     accents: list[str] | None = None,

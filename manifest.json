@@ -45,7 +45,8 @@
     {"name": "diagnose_thinkcell", "description": "Find out why think-cell automation is not working"},
     {"name": "list_chart_templates", "description": "List think-cell's chart library and your saved slide templates"},
     {"name": "fill_chart_template", "description": "Fill a library or saved slide template with your data"},
-    {"name": "template_from_slide", "description": "Save one of your own think-cell slides as a reusable template"}
+    {"name": "template_from_slide", "description": "Save one of your own think-cell slides as a reusable template"},
+    {"name": "update_open_charts", "description": "Give charts in the open deck new numbers, in place"}
   ],
   "compatibility": {
     "platforms": ["win32"],

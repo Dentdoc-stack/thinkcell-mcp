@@ -27,10 +27,10 @@ except ImportError:  # pragma: no cover - non-Windows
 
 # think-cell install location, found the same way as converter.py (the
 # THINKCELL_DIR environment variable, else the registry, else the default).
-from converter import find_thinkcell_dir
+from converter import find_ppttc_exe, find_thinkcell_dir
 
 THINKCELL_DIR = Path(find_thinkcell_dir())
-PPTTC_EXE = THINKCELL_DIR / "ppttc.exe"
+PPTTC_EXE = Path(find_ppttc_exe(THINKCELL_DIR))
 
 # PowerPoint add-in LoadBehavior values and what they mean.
 LOAD_BEHAVIOR = {

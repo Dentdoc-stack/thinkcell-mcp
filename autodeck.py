@@ -262,6 +262,16 @@ def _chart_warnings(chart: Any, where: str, value_key: str) -> list[str]:
             f"meaningful bars. Provide at least two categories."
         )
 
+    if value_key == "percentage" and any(
+        isinstance(series, dict) and (series.get("fill") or series.get("semantic"))
+        for series in (chart.get("series") or [])
+    ):
+        # think-cell's template has "Use Datasheet Fill" on for the right chart only.
+        warnings.append(
+            f"{where}: `fill` and `semantic` colours only show on right_chart; "
+            f"the left chart keeps the theme colours. Put a coloured chart on the right."
+        )
+
     if value_key == "percentage":
         magnitudes = [
             abs(value)

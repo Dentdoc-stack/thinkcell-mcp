@@ -27,6 +27,7 @@ SUPPORTED_VERSIONS = [*MODERN_VERSIONS, *reversed(SUPPORTED_PROTOCOL_VERSIONS)]
 META_VERSION = "io.modelcontextprotocol/protocolVersion"
 META_SERVER_INFO = "io.modelcontextprotocol/serverInfo"
 LIST_TTL_MS = 3_600_000  # the tool list only changes when the server is updated
+MAX_BODY = 8_000_000  # bytes per request; chart data is far smaller
 
 HEADER_MISMATCH, UNSUPPORTED_VERSION, METHOD_NOT_FOUND, INVALID_PARAMS = -32020, -32022, -32601, -32602
 
@@ -114,6 +115,8 @@ def modern_era(app, server_mcp, verifier, resource_metadata_url: str, server_inf
             message = await receive()
             body += message.get("body", b"")
             more = message.get("more_body", False)
+            if len(body) > MAX_BODY:  # read before sign-in, so anyone could fill memory
+                return await Response(status_code=413)(scope, receive, send)
         try:
             msg = json.loads(body)
             modern = isinstance(msg, dict) and META_VERSION in ((msg.get("params") or {}).get("_meta") or {})

@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import time
 from collections import deque
@@ -25,6 +26,7 @@ from mcp.server.auth.provider import (
     AuthorizationCode,
     AuthorizationParams,
     RefreshToken,
+    RegistrationError,
     construct_redirect_uri,
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
@@ -35,6 +37,7 @@ CODE_TTL = 300  # authorization code, between /connect and Claude's token call
 REQUEST_TTL = 900  # time the user has to type the connect code
 TRIES_PER_REQUEST = 5
 FAILURES_PER_WINDOW, FAILURE_WINDOW = 10, 600
+MAX_CLIENTS, MAX_PENDING = 200, 100  # registration and /authorize need no sign-in
 
 # No 0/O, 1/I/L: the code is read off one screen and typed into another.
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
@@ -44,6 +47,17 @@ def new_connect_code() -> str:
     """A fresh 8-character connect code, e.g. ``K7MP-Q2XD``."""
     raw = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
     return f"{raw[:4]}-{raw[4:]}"
+
+
+def replace_file(tmp: Path, target: Path) -> None:
+    """``os.replace``, retried: on Windows an antivirus scan of the target makes it fail for a moment."""
+    for attempt in range(20):
+        try:
+            return os.replace(tmp, target)
+        except PermissionError:
+            if attempt == 19:
+                raise
+            time.sleep(0.05)
 
 
 def _norm(code: str) -> str:
@@ -68,10 +82,14 @@ class ConnectorAuth:
         self.pending: dict[str, dict] = {}  # sign-in request id -> client, params, expiry, tries
         self.codes: dict[str, AuthorizationCode] = {}
         self.failures: deque[float] = deque()
-        state = json.loads(state_file.read_text(encoding="utf-8")) if state_file.is_file() else {}
-        self.clients = {k: OAuthClientInformationFull.model_validate(v) for k, v in state.get("clients", {}).items()}
-        self.access = {k: AccessToken.model_validate(v) for k, v in state.get("access", {}).items()}
-        self.refresh = {k: RefreshToken.model_validate(v) for k, v in state.get("refresh", {}).items()}
+        try:
+            state = json.loads(state_file.read_text(encoding="utf-8")) if state_file.is_file() else {}
+            self.clients = {k: OAuthClientInformationFull.model_validate(v)
+                            for k, v in state.get("clients", {}).items()}
+            self.access = {k: AccessToken.model_validate(v) for k, v in state.get("access", {}).items()}
+            self.refresh = {k: RefreshToken.model_validate(v) for k, v in state.get("refresh", {}).items()}
+        except (ValueError, AttributeError):  # unreadable state: everyone connects again, no crash loop
+            self.clients, self.access, self.refresh = {}, {}, {}
 
     def _save(self) -> None:
         now = time.time()
@@ -83,18 +101,33 @@ class ConnectorAuth:
             "refresh": {k: v.model_dump(mode="json") for k, v in self.refresh.items()},
         }
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
-        self.state_file.write_text(json.dumps(state, indent=1), encoding="utf-8")
+        tmp = self.state_file.with_suffix(".tmp")  # replaced in one step: never a half-written file
+        tmp.write_text(json.dumps(state, indent=1), encoding="utf-8")
+        replace_file(tmp, self.state_file)
 
     # ------------------------------------------------------------ clients
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         return self.clients.get(client_id)
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        # Registration is open to the internet: at the limit, forget the oldest clients that never signed in.
+        signed_in = {t.client_id for t in self.refresh.values()}
+        for client_id in [c for c in self.clients if c not in signed_in]:
+            if len(self.clients) < MAX_CLIENTS:
+                break
+            del self.clients[client_id]
+        if len(self.clients) >= MAX_CLIENTS:
+            raise RegistrationError("invalid_client_metadata", "Too many clients are connected to this PC.")
         self.clients[client_info.client_id] = client_info
         self._save()
 
     # ------------------------------------------------------------ approval
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
+        now = time.time()
+        self.pending = {k: v for k, v in self.pending.items() if v["expires"] > now}
+        self.codes = {k: v for k, v in self.codes.items() if v.expires_at > now}
+        while len(self.pending) >= MAX_PENDING:
+            del self.pending[next(iter(self.pending))]  # oldest first
         request_id = secrets.token_urlsafe(16)
         self.pending[request_id] = {"client_id": client.client_id, "params": params,
                                     "expires": time.time() + REQUEST_TTL, "tries": 0}
