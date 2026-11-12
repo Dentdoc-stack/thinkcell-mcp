@@ -70,7 +70,7 @@ DEFAULT_TEMPLATE = "template.pptx"
 REMOTE = False
 REMOTE_ROOTS = [OUTPUT_DIR, PROJECT_ROOT / "templates"]
 
-__version__ = "0.2.0"  # keep in step with pyproject.toml and manifest.json
+__version__ = "0.3.0"  # keep in step with pyproject.toml and manifest.json
 mcp = FastMCP("thinkcell")
 
 
